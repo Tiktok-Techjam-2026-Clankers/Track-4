@@ -11,6 +11,40 @@ Build an AI shopping agent that asks useful follow-up questions and recommends t
 
 The organizer keeps 800 additional sessions private for final evaluation.
 
+## Independent Agent Architecture
+
+The implementation in `starter/agent.py` is organized into the five stages used
+by the shopping flow:
+
+1. **Intent classification** distinguishes browsing, buying, and an intent
+   override.
+2. **Conversation memory** keeps active requirements, retired intent, declined
+   attributes, asked questions, and a stable recommendation ladder per session.
+3. **Product search** runs SQLite FTS5/BM25, local semantic vectors, structured
+   attribute matching, catalog-derived intent-card matching, and exact-category
+   retrieval in parallel.
+4. **Ranking** merges the routes with intent-aware Reciprocal Rank Fusion,
+   category/constraint evidence, popularity tie-breaking, and late-turn
+   exploration.
+5. **Response policy** returns a valid ranked list and one useful clarification
+   question, then repeats the flow with the shopper's next answer.
+
+The semantic encoder and every index are built locally from visible frozen
+catalog fields. The agent makes no LLM or network calls, needs no API key, and
+reports zero token usage.
+
+## Verified Results
+
+Using the supplied deterministic evaluator and frozen 50,000-product catalog:
+
+| Test set | Sessions | Hit Rate@10 | MRR | MTTC | TechnicalScore |
+|---|---:|---:|---:|---:|---:|
+| Default public | 200 | 0.995 | 0.974881 | 2.495 | **0.960064** |
+| Extended holdout | 500 | 0.996 | 0.961056 | 2.768 | **0.950957** |
+
+The extended file is an additional local holdout and is not used by the agent at
+runtime. No sample IDs or target labels are embedded in the implementation.
+
 ## Task
 
 For each session, your agent receives an anonymized preference profile and a short customer message. Raw user IDs, review text, timestamps, and purchase history are never disclosed. On every turn the agent may:
@@ -34,10 +68,20 @@ Verify the downloaded file using the published `SHA256SUMS` file.
 
 ## Run the Starter
 
-Python 3.10 or later is recommended. The starter uses only the Python standard library.
+Python 3.10 or later is recommended. Install the local vector dependency first:
+
+```bash
+python -m pip install -r requirements.txt
+```
 
 ```bash
 python3 -m evaluator.local_evaluator
+```
+
+Run the unit and contract tests with:
+
+```bash
+python -m unittest discover -s tests -v
 ```
 
 Edit `starter/agent.py` to implement your system. Do not edit the evaluator or public labels when reporting your local score.
