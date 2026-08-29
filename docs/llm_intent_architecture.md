@@ -118,7 +118,7 @@ Each response includes cumulative session token usage:
 
 ## Deterministic Scores (no LLM)
 
-Verified on `di-heng-2-llm-intent` with `GEMINI_API_KEY` unset:
+Verified on `di-heng-3` with `GEMINI_API_KEY` unset:
 
 | Dataset | Score |
 |---|---|

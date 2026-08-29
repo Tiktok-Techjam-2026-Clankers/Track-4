@@ -9,7 +9,9 @@ few conversation turns as possible.
 
 The solution is implemented independently in `starter/agent.py`. It uses only
 the frozen catalog and information revealed during the current conversation.
-It does not call an LLM, external API, or hosted vector database.
+It optionally uses Gemini 3.5 Flash-Lite for natural-language intent
+parsing (see `docs/llm_intent_architecture.md`) and falls back to pure
+deterministic parsing when no API key is available.
 
 ## 2. System Flow
 
@@ -163,7 +165,7 @@ The final output contains:
 - one valid `ask_attribute`;
 - no more than 10 ranked catalog identifiers;
 - no duplicate identifiers;
-- zero reported model tokens because no LLM is used.
+- cumulative session token usage from the optional LLM layer (zero when no key is set).
 
 ## 4. Clarification Strategy
 
@@ -238,13 +240,13 @@ machine-readable results are stored in `docs/independent_agent_results.json`.
 
 ## 8. Runtime Characteristics
 
-- No LLM calls or API credentials.
-- No network access during evaluation.
+- Optional Gemini 3.5 Flash-Lite calls for intent parsing (key read from `.env` automatically).
+- Falls back to fully deterministic parsing when no key is set — no network access needed.
 - No hosted service or external vector database.
 - All indexes are in memory; BM25 uses an in-memory SQLite database.
 - Product vectors are precomputed once at startup.
-- Reported prompt and completion token usage is zero.
-- Behavior is deterministic for a fixed catalog and conversation.
+- Token usage is tracked per session and reported in every response.
+- Retrieval and ranking are deterministic for a fixed catalog and conversation.
 
 ## 9. Data and Leakage Safety
 
@@ -258,9 +260,13 @@ and conversation messages supplied through the official agent interface.
 | File | Purpose |
 |---|---|
 | `starter/agent.py` | Complete five-stage agent and required interface |
+| `starter/intent_parser.py` | LLM intent layer (Gemini + deterministic fallback) |
 | `tests/test_agent_pipeline.py` | Intent, memory, retrieval, ranking and contract tests |
+| `tests/test_intent_parser.py` | Intent parser unit tests (42 tests, all mocked) |
+| `tests/test_adversarial_holdout.py` | Adversarial holdout schema tests |
 | `tests/test_evaluator.py` | Evaluator normalization and metric tests |
 | `requirements.txt` | NumPy dependency for local vectors |
+| `docs/llm_intent_architecture.md` | LLM integration architecture and failure modes |
 | `docs/independent_agent_results.json` | Final aggregate benchmark results |
 | `docs/agent_api_contract.json` | Official response contract |
 
