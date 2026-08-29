@@ -3,6 +3,7 @@ __pycache__/
 .DS_Store
 .env
 results.json
+stress_results.json
 data/catalog.jsonl
 data/catalog.jsonl.gz
 data/releases/
