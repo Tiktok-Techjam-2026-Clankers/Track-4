@@ -2,7 +2,9 @@
   "name": "techjam-conversational-search",
   "private": true,
   "scripts": {
-    "score": "python scripts/score_datasets.py",
-    "custom-evaluator-1": "python -m evaluator.custom_evaluator_1 --shared-agent"
+    "evaluate": "python scripts/evaluate_datasets.py",
+    "evaluate-robust": "python scripts/evaluate_robust.py",
+    "evaluate-splits": "python scripts/evaluate_splits.py",
+    "evaluate-personas": "python -m evaluator.custom_evaluator_1 --shared-agent"
   }
 }

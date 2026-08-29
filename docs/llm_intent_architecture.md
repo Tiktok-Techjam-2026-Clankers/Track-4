@@ -67,7 +67,7 @@ You can also set the variable in your shell if you prefer:
 
 ```bash
 export GEMINI_API_KEY="your-key-here"
-python scripts/score_datasets.py
+python scripts/evaluate_datasets.py
 ```
 
 When the variable is unset or empty, the agent falls back to pure

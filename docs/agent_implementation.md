@@ -282,6 +282,11 @@ and conversation messages supplied through the official agent interface.
 | `tests/test_intent_parser.py` | Intent parser unit tests (42 tests, all mocked) |
 | `tests/test_adversarial_holdout.py` | Adversarial holdout schema tests |
 | `tests/test_evaluator.py` | Evaluator normalization and metric tests |
+| `scripts/evaluate_datasets.py` | Score agent against default + extended datasets |
+| `scripts/evaluate_robust.py` | Paraphrase/noise generalization evaluator |
+| `scripts/evaluate_splits.py` | Multi-split evaluator with locked-test safety |
+| `evaluator/local_evaluator.py` | Official local evaluator (participant kit) |
+| `evaluator/custom_evaluator_1*.py` | Persona-based custom evaluator (4 files) |
 | `requirements.txt` | NumPy dependency for local vectors |
 | `docs/llm_intent_architecture.md` | LLM integration architecture and failure modes |
 | `docs/independent_agent_results.json` | Final aggregate benchmark results |
