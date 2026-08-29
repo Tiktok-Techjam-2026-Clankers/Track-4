@@ -1,4 +1,4 @@
-"""Run the private stress evaluation: one agent, several customer personas."""
+"""Run custom evaluator 1: one agent, several customer personas."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from evaluator.local_evaluator import Agent, catalog_index, load_jsonl  # noqa: E402
-from stress.personas import CONTROL_PERSONA, PERSONAS  # noqa: E402
-from stress.runner import delta_against, run_persona  # noqa: E402
+from evaluator.custom_evaluator_1_personas import CONTROL_PERSONA, PERSONAS  # noqa: E402
+from evaluator.custom_evaluator_1_runner import delta_against, run_persona  # noqa: E402
 
 
 COLUMNS = ("hit_rate_at_10", "mrr", "mttc", "efficiency", "recommended_technical_score")
@@ -73,10 +73,12 @@ def format_table(results: dict[str, dict]) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Private customer-phrasing stress evaluation")
+    parser = argparse.ArgumentParser(description="Custom customer-phrasing evaluator 1")
     parser.add_argument("--catalog", default=REPO_ROOT / "data" / "catalog.jsonl", type=Path)
     parser.add_argument("--dataset", default=REPO_ROOT / "data" / "public_set.jsonl", type=Path)
-    parser.add_argument("--output", default=REPO_ROOT / "stress_results.json", type=Path)
+    parser.add_argument(
+        "--output", default=REPO_ROOT / "custom_evaluator_1_results.json", type=Path
+    )
     parser.add_argument("--personas", nargs="+", default=list(PERSONAS), choices=list(PERSONAS))
     parser.add_argument("--limit", type=int, default=None, help="stratified subsample size")
     parser.add_argument("--transcripts", action="store_true", help="store per-turn dialogue in the report")
@@ -111,7 +113,7 @@ def main() -> None:
 
     control = results.get(CONTROL_PERSONA)
     report = {
-        "harness": "private_stress_eval",
+        "harness": "custom_evaluator_1",
         "dataset": relative_label(args.dataset),
         "sample_count": len(samples),
         "control_persona": CONTROL_PERSONA if control else None,

@@ -4,6 +4,7 @@ __pycache__/
 .env
 results.json
 stress_results.json
+custom_evaluator_1_results.json
 data/catalog.jsonl
 data/catalog.jsonl.gz
 data/releases/

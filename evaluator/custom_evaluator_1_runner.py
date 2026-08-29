@@ -1,4 +1,4 @@
-"""Session runner for the private stress evaluation.
+"""Session runner for custom evaluator 1.
 
 The loop mirrors `evaluator.local_evaluator.evaluate` turn for turn: same turn
 budget, same override gating, same disclosure rules, same scoring. The only
@@ -24,8 +24,8 @@ from evaluator.local_evaluator import (
     normalize_recommendations,
 )
 
-from stress.contract import check_response
-from stress.personas import Persona
+from evaluator.custom_evaluator_1_contract import check_response
+from evaluator.custom_evaluator_1_personas import Persona
 
 EMPTY_RESPONSE = {"message": "", "ask_attribute": None, "recommendations": []}
 
@@ -112,7 +112,7 @@ def run_session(
     timings: list[float],
 ) -> tuple[dict, list[str], Counter]:
     sample_id = str(sample["sample_id"])
-    session_id = f"stress_{persona.name}_{sample_id}"
+    session_id = f"custom_evaluator_1_{persona.name}_{sample_id}"
     agent.reset(session_id, sample["user_profile"])
     target = str(sample["ground_truth"]["parent_asin"])
     intent_card, behavior = materialize_hidden_fields(sample, products)

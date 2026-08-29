@@ -13,11 +13,11 @@ from evaluator.local_evaluator import (
     initial_message as official_initial_message,
     intent_card,
 )
-from stress.contract import check_response
-from stress.personas import PERSONAS, paraphrase_constraint, terse_constraint
-from stress.runner import customer_reply, opening_message, run_persona
+from evaluator.custom_evaluator_1_contract import check_response
+from evaluator.custom_evaluator_1_personas import PERSONAS, paraphrase_constraint, terse_constraint
+from evaluator.custom_evaluator_1_runner import customer_reply, opening_message, run_persona
 
-from scripts.run_stress_eval import REPO_ROOT, relative_label, stratified_sample
+from evaluator.custom_evaluator_1 import REPO_ROOT, relative_label, stratified_sample
 
 
 CATALOG_ROWS = [
@@ -49,13 +49,13 @@ CATALOG_ROWS = [
 
 SAMPLES = [
     {
-        "sample_id": "stress_0001",
+        "sample_id": "custom_eval_0001",
         "scenario_type": "buying",
         "user_profile": {"summary": "x"},
         "ground_truth": {"parent_asin": "A"},
     },
     {
-        "sample_id": "stress_0002",
+        "sample_id": "custom_eval_0002",
         "scenario_type": "browsing",
         "user_profile": {"summary": "y"},
         "ground_truth": {"parent_asin": "B"},
@@ -84,7 +84,7 @@ class ColorSeekingAgent:
         }
 
 
-class StressHarnessTest(unittest.TestCase):
+class CustomEvaluator1Test(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls._directory = tempfile.TemporaryDirectory()
@@ -105,42 +105,42 @@ class StressHarnessTest(unittest.TestCase):
     def test_verbatim_persona_matches_official_opening_wording(self) -> None:
         sample = self._card_sample()
         official_disclosed: set[str] = set()
-        stress_disclosed: set[str] = set()
+        custom_disclosed: set[str] = set()
         expected = official_initial_message(sample, "Shoes", official_disclosed)
         actual = opening_message(
-            PERSONAS["verbatim"], sample, "Shoes", stress_disclosed, random.Random(0)
+            PERSONAS["verbatim"], sample, "Shoes", custom_disclosed, random.Random(0)
         )
         self.assertEqual(actual, expected)
-        self.assertEqual(stress_disclosed, official_disclosed)
+        self.assertEqual(custom_disclosed, official_disclosed)
 
     def test_verbatim_persona_matches_official_reply_wording(self) -> None:
         sample = self._card_sample()
         for attribute in ("color", "material", "budget", "size", None, "not_an_attribute"):
             with self.subTest(attribute=attribute):
                 official_disclosed: set[str] = set()
-                stress_disclosed: set[str] = set()
+                custom_disclosed: set[str] = set()
                 expected, expected_boundary = official_customer_reply(
                     sample, attribute, official_disclosed, False
                 )
                 actual, actual_boundary = customer_reply(
-                    PERSONAS["verbatim"], sample, attribute, stress_disclosed, False, random.Random(0)
+                    PERSONAS["verbatim"], sample, attribute, custom_disclosed, False, random.Random(0)
                 )
                 self.assertEqual(actual, expected)
                 self.assertEqual(actual_boundary, expected_boundary)
-                self.assertEqual(stress_disclosed, official_disclosed)
+                self.assertEqual(custom_disclosed, official_disclosed)
 
     def test_verbatim_persona_reproduces_official_evaluator_metrics(self) -> None:
         official = evaluate(
             ColorSeekingAgent(), SAMPLES, self.catalog_ids, self.categories, self.products
         )
-        stress = run_persona(
+        custom = run_persona(
             ColorSeekingAgent(), PERSONAS["verbatim"], SAMPLES,
             self.catalog_ids, self.categories, self.products,
         )
         for key in ("hit_rate_at_10", "mrr", "mttc", "efficiency", "recommended_technical_score"):
-            self.assertEqual(stress[key], official[key], key)
+            self.assertEqual(custom[key], official[key], key)
         self.assertEqual(
-            [(item["sample_id"], item["first_hit_turn"], item["best_rank"]) for item in stress["sessions"]],
+            [(item["sample_id"], item["first_hit_turn"], item["best_rank"]) for item in custom["sessions"]],
             [(item["sample_id"], item["first_hit_turn"], item["best_rank"]) for item in official["sessions"]],
         )
 

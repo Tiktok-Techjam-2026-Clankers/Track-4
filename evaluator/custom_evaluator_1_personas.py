@@ -1,4 +1,4 @@
-"""Deterministic customer personas for the private stress evaluation.
+"""Deterministic customer personas for custom evaluator 1.
 
 A persona controls only how the simulated customer *words* things. Which
 constraints are revealed, and on which turn, stays under the official simulator

@@ -1,4 +1,4 @@
-# Private Stress Evaluation
+# Custom Evaluator 1
 
 A held-out robustness harness that measures how much of the agent's score depends
 on the official simulator's exact wording.
@@ -56,7 +56,7 @@ adds no dependency, no cost, and no network requirement.
 
 Every utterance is seeded from `f"{persona}\0{sample_id}\0{turn}"`, the same
 string-seeded `random.Random` idiom the official evaluator uses. Session ids are
-derived (`stress_{persona}_{sample_id}`) rather than random. Two runs of the same
+derived (`custom_evaluator_1_{persona}_{sample_id}`) rather than random. Two runs of the same
 command produce byte-identical reports.
 
 Latency is the only non-deterministic output and is opt-in behind `--timings`.
@@ -64,7 +64,7 @@ Latency is the only non-deterministic output and is opt-in behind `--timings`.
 ## Calibration invariant
 
 The `verbatim` persona must reproduce the official evaluator exactly. This is
-asserted three ways in `tests/test_stress_eval.py`:
+asserted three ways in `tests/test_custom_evaluator_1.py`:
 
 1. Opening and reply strings are compared against `initial_message` and
    `customer_reply` directly.
@@ -84,11 +84,11 @@ the official scoring path unchanged, so contract checks never move the metrics.
 ## Usage
 
 ```bash
-python scripts/run_stress_eval.py --shared-agent
+python -m evaluator.custom_evaluator_1 --shared-agent
 ```
 
 ```bash
-python scripts/run_stress_eval.py --dataset data/private_set.jsonl --limit 100 --transcripts
+python -m evaluator.custom_evaluator_1 --dataset data/private_set.jsonl --limit 100 --transcripts
 ```
 
 | Flag | Effect |
@@ -99,7 +99,7 @@ python scripts/run_stress_eval.py --dataset data/private_set.jsonl --limit 100 -
 | `--timings` | Record per-turn latency (non-deterministic) |
 | `--shared-agent` | Reuse one `Agent` across personas instead of rebuilding per persona |
 
-The report is written to `stress_results.json` (gitignored) and a comparison table
+The report is written to `custom_evaluator_1_results.json` (gitignored) and a comparison table
 is printed to stdout.
 
 ## Scope
