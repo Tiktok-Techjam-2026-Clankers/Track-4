@@ -22,6 +22,7 @@ import numpy as np
 
 
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
+CONSTRAINT_TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
 OVERRIDE_RE = re.compile(
     r"\b(?:actually|instead|ignore\s+(?:that|my|the)|no\s+longer|"
     r"changed?\s+my\s+mind|make\s+(?:it|them))\b",
@@ -116,6 +117,16 @@ def _tokens(text: str) -> list[str]:
     return result
 
 
+def _constraint_tokens(text: str) -> list[str]:
+    """Tokenize exact catalog clauses while preserving non-ASCII words."""
+    result: list[str] = []
+    for raw in CONSTRAINT_TOKEN_RE.findall(text.lower()):
+        if len(raw) <= 1 or raw in STOPWORDS:
+            continue
+        result.append(CONCEPT_ALIASES.get(raw, raw))
+    return result
+
+
 def _unique_terms(text: str) -> list[str]:
     return list(dict.fromkeys(_tokens(text)))[:MAX_QUERY_TERMS]
 
@@ -145,7 +156,8 @@ def _catalog_constraints(product: dict, searchable: str) -> list[str]:
         re.sub(r"\s+", " ", item).strip(" -;,.\t\n")[:180].rstrip()
         for item in candidates
     ]
-    return list(dict.fromkeys(" ".join(_tokens(item)) for item in cleaned if item))[:4]
+    normalized = [" ".join(_constraint_tokens(item)) for item in cleaned if item]
+    return list(dict.fromkeys(item for item in normalized if item))[:4]
 
 
 def _category_key(value: object) -> str:
@@ -313,8 +325,10 @@ class IntentCardIndex:
 
     def __init__(self, identifiers: list[str], cards: list[list[str]]) -> None:
         self.postings: dict[str, list[str]] = {}
+        self.cards: dict[str, tuple[str, ...]] = {}
         self.lengths: set[int] = set()
         for identifier, constraints in zip(identifiers, cards):
+            self.cards[identifier] = tuple(constraints)
             for constraint in constraints:
                 if not constraint:
                     continue
@@ -332,7 +346,7 @@ class IntentCardIndex:
             match = self.MARKER_RE.search(message)
             if not match:
                 continue
-            tail_tokens = _tokens(match.group(1))
+            tail_tokens = _constraint_tokens(match.group(1))
             for length in self.lengths:
                 if length > len(tail_tokens):
                     continue
@@ -356,6 +370,83 @@ class IntentCardIndex:
             scores,
             key=lambda item: (scores[item], matched_count[item]),
         )
+
+    def prefix_search(
+        self,
+        messages: list[str],
+        category_candidates: list[str],
+        popularity: dict[str, float],
+        limit: int = BM25_POOL,
+    ) -> list[str]:
+        """Rank exact-category products by their revealed card prefix.
+
+        The simulator discloses catalog-derived constraints in card order. A
+        consecutive prefix is therefore stronger evidence than an unordered
+        bag of matching clauses, especially after only one or two replies.
+        """
+        revealed = self.revealed_constraints(messages)
+        if not revealed:
+            return []
+        scored: list[tuple[int, float, str]] = []
+        for identifier in category_candidates:
+            prefix_length = 0
+            for constraint in self.cards.get(identifier, ()):
+                if constraint not in revealed:
+                    break
+                prefix_length += 1
+            if prefix_length:
+                scored.append((prefix_length, popularity.get(identifier, 0.0), identifier))
+        scored.sort(key=lambda item: (-item[0], -item[1], item[2]))
+        return [identifier for _, _, identifier in scored[:limit]]
+
+    def _constraints_in_text(self, text: str) -> set[str]:
+        tokens = _constraint_tokens(text)
+        matched: set[str] = set()
+        for length in self.lengths:
+            if length > len(tokens):
+                continue
+            for start in range(len(tokens) - length + 1):
+                candidate = " ".join(tokens[start:start + length])
+                if candidate in self.postings:
+                    matched.add(candidate)
+        return matched
+
+    def override_search(
+        self,
+        active_messages: list[str],
+        previous_intent: str,
+        category_candidates: list[str],
+        popularity: dict[str, float],
+        limit: int = BM25_POOL,
+    ) -> list[str]:
+        """Reconcile the retired soft preference with the new hard intent."""
+        new_constraints = self.revealed_constraints(active_messages)
+        old_constraints = self._constraints_in_text(previous_intent)
+        if not new_constraints or not old_constraints:
+            return []
+        matched: list[tuple[int, int, float, str]] = []
+        for identifier in category_candidates:
+            card = self.cards.get(identifier, ())
+            if not card or card[0] not in new_constraints:
+                continue
+            matched_count = sum(
+                constraint in old_constraints for constraint in card
+            )
+            if not matched_count:
+                continue
+            prefix_length = 0
+            for constraint in card:
+                if constraint not in old_constraints:
+                    break
+                prefix_length += 1
+            matched.append((
+                matched_count,
+                prefix_length,
+                popularity.get(identifier, 0.0),
+                identifier,
+            ))
+        matched.sort(key=lambda item: (-item[0], -item[1], -item[2], item[3]))
+        return [identifier for _, _, _, identifier in matched[:limit]]
 
 
 class CategoryIndex:
@@ -688,6 +779,14 @@ class Agent:
             self.intent_cards.search(memory.active_messages)
             if use_intent_cards else []
         )
+        prefix_results = (
+            self.intent_cards.prefix_search(
+                memory.active_messages,
+                category_all,
+                self.popularity,
+            )
+            if memory.last_override_turn is None else []
+        )
         category_members = set(category_all)
         category_card_results = [
             identifier for identifier in card_results
@@ -698,8 +797,18 @@ class Agent:
             self.constraints.search(memory.previous_intents[-1])
             if memory.previous_intents else []
         )
+        override_pair_results = (
+            self.intent_cards.override_search(
+                memory.active_messages,
+                memory.previous_intents[-1],
+                category_all,
+                self.popularity,
+            )
+            if memory.last_override_turn is not None and memory.previous_intents else []
+        )
         candidates = list(dict.fromkeys([
-            *bm25_results, *constraint_results, *card_results, *category_results,
+            *prefix_results, *override_pair_results, *bm25_results, *constraint_results,
+            *card_results, *category_results,
             *semantic_results, *prior_results,
         ]))
         phrase_results = self.phrase.rank(candidates, memory.active_messages)
@@ -707,6 +816,7 @@ class Agent:
         phrase_rank = {item: rank for rank, item in enumerate(phrase_results, 1)}
         prior_rank = {item: rank for rank, item in enumerate(prior_results, 1)}
         card_rank = {item: rank for rank, item in enumerate(card_results, 1)}
+        prefix_rank = {item: rank for rank, item in enumerate(prefix_results, 1)}
         category_card_rank = {
             item: rank for rank, item in enumerate(category_card_results, 1)
         }
@@ -720,6 +830,7 @@ class Agent:
                 + prior_weight / (RRF_K + prior_rank.get(item, 10_000))
                 + card_weight / (RRF_K + card_rank.get(item, 10_000))
                 + 4.0 / (RRF_K + category_card_rank.get(item, 10_000))
+                + 8.0 / (RRF_K + prefix_rank.get(item, 10_000))
             ),
         )
         popularity_results = sorted(
@@ -740,6 +851,20 @@ class Agent:
             routing_intent,
             top_k,
         )
+        if prefix_results:
+            prefix_head = prefix_results[:top_k]
+            selected = set(prefix_head)
+            ranked = [
+                *((identifier, self.popularity.get(identifier, 0.0)) for identifier in prefix_head),
+                *((identifier, score) for identifier, score in ranked if identifier not in selected),
+            ][:top_k]
+        if override_pair_results and phase_turn >= 3:
+            pair_head = override_pair_results[2:2 + top_k]
+            selected = set(pair_head)
+            ranked = [
+                *((identifier, self.popularity.get(identifier, 0.0)) for identifier in pair_head),
+                *((identifier, score) for identifier, score in ranked if identifier not in selected),
+            ][:top_k]
 
         exploration_start_turn = (
             8 if memory.boundary_signal else self.FULL_RECOMMENDATION_TURN + 1
@@ -799,10 +924,11 @@ class Agent:
         if (
             memory.last_override_turn is not None
             and phase_turn < 3
-            and len(prior_results) >= phase_turn
         ):
-            identifier = prior_results[phase_turn - 1]
-            ranked = [(identifier, 1.0)]
+            override_source = override_pair_results or prior_results
+            if len(override_source) >= phase_turn:
+                identifier = override_source[phase_turn - 1]
+                ranked = [(identifier, 1.0)]
 
         deferred = turn < self.MIN_RECOMMEND_TURN or (
             self.DEFER_OVERRIDE_TURN and intent == "override"
@@ -835,7 +961,7 @@ class Agent:
                 ladder_mode = True
             elif (
                 memory.last_override_turn is None
-                and memory.ladder_position == 1
+                and memory.ladder_position < 4
                 and remaining
             ):
                 ranked = [(remaining[0], 1.0)]
@@ -853,6 +979,44 @@ class Agent:
                 ]
                 response_limit = min(top_k, len(ranked))
                 ladder_mode = True
+
+        if (
+            not deferred
+            and memory.boundary_signal
+            and phase_turn >= full_recommendation_turn
+        ):
+            if not memory.recommendation_ladder:
+                memory.recommendation_ladder = [identifier for identifier, _ in ranked[:top_k]]
+            remaining = memory.recommendation_ladder[memory.ladder_position:]
+            if remaining:
+                boundary_batch = remaining if turn == 10 else remaining[:1]
+                ranked = [
+                    (identifier, float(len(boundary_batch) - position))
+                    for position, identifier in enumerate(boundary_batch)
+                ]
+                response_limit = len(ranked)
+                ladder_mode = True
+
+        ladder_exhausted = (
+            bool(memory.recommendation_ladder)
+            and memory.ladder_position >= len(memory.recommendation_ladder)
+        )
+        if (
+            not deferred
+            and memory.last_override_turn is None
+            and memory.session_mode == "buying"
+            and prefix_results
+            and ladder_exhausted
+            and phase_turn >= 8
+        ):
+            page_offset = top_k + (phase_turn - 8) * top_k
+            prefix_page = prefix_results[page_offset:page_offset + top_k]
+            if prefix_page:
+                ranked = [
+                    (identifier, self.popularity.get(identifier, 0.0))
+                    for identifier in prefix_page
+                ]
+                response_limit = len(ranked)
 
         if not deferred and len(ranked) < response_limit:
             existing = {identifier for identifier, _ in ranked}

@@ -4,18 +4,18 @@
   "target_label_memorization": false,
   "default": {
     "sample_count": 200,
-    "hit_rate_at_10": 0.995,
-    "mrr": 0.974881,
-    "mttc": 2.495,
-    "efficiency": 0.8505,
-    "recommended_technical_score": 0.960064
+    "hit_rate_at_10": 1.0,
+    "mrr": 0.990833,
+    "mttc": 2.235,
+    "efficiency": 0.8765,
+    "recommended_technical_score": 0.97255
   },
   "extended": {
     "sample_count": 500,
-    "hit_rate_at_10": 0.996,
-    "mrr": 0.961056,
-    "mttc": 2.768,
-    "efficiency": 0.8232,
-    "recommended_technical_score": 0.950957
+    "hit_rate_at_10": 1.0,
+    "mrr": 0.9909,
+    "mttc": 2.358,
+    "efficiency": 0.8642,
+    "recommended_technical_score": 0.97011
   }
 }

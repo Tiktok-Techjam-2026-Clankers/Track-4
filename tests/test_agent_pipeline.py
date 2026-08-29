@@ -10,7 +10,9 @@ from starter.agent import (
     ConversationMemory,
     HybridRanker,
     InMemoryVectorIndex,
+    IntentCardIndex,
     IntentClassifier,
+    _catalog_constraints,
 )
 
 
@@ -97,6 +99,52 @@ class RetrievalAndRankingTest(unittest.TestCase):
         self.assertEqual(buying[0][0], "shared")
         self.assertEqual(browsing[0][0], "shared")
         self.assertNotEqual(buying[0][1], browsing[0][1])
+
+    def test_ordered_prefix_outweighs_popularity(self) -> None:
+        index = IntentCardIndex(
+            ["blue", "red"],
+            [
+                ["cotton", "color blue", "pull closure"],
+                ["cotton", "color red", "pull closure"],
+            ],
+        )
+        ranked = index.prefix_search(
+            [
+                "A key requirement is: cotton.",
+                "For that, what matters is: color: blue.",
+            ],
+            ["blue", "red"],
+            {"blue": 0.0, "red": 100.0},
+        )
+        self.assertEqual(ranked[0], "blue")
+
+    def test_override_reconciles_old_and_new_card_constraints(self) -> None:
+        index = IntentCardIndex(
+            ["target", "other"],
+            [
+                ["cotton", "color blue", "pull closure", "machine wash"],
+                ["cotton", "color blue", "pull closure", "dry clean"],
+            ],
+        )
+        ranked = index.override_search(
+            ["Actually, what I need is: cotton."],
+            "I'm looking for shirts. Machine wash. "
+            "For that, what matters is: cotton; color blue.",
+            ["target", "other"],
+            {"target": 0.0, "other": 100.0},
+        )
+        self.assertEqual(ranked[0], "target")
+
+    def test_catalog_constraints_preserve_unicode_clauses(self) -> None:
+        product = {
+            "features": ["进口", "Plastic frame"],
+            "details": {},
+            "price": None,
+        }
+        self.assertEqual(
+            _catalog_constraints(product, "进口 black sunglasses")[:2],
+            ["进口", "color black"],
+        )
 
 
 class AgentContractTest(unittest.TestCase):

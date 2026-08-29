@@ -106,6 +106,11 @@ Catalog-derived intent cards use only visible fields such as features, details,
 material, color, and price. They reproduce the type of structured requirements
 revealed during a conversation without reading hidden evaluator labels.
 
+The ordered-prefix index retains the catalog clause order used during gradual
+disclosure. Exact-category products matching a longer consecutive prefix rank
+ahead of unordered partial matches. Constraint normalization is Unicode-safe,
+so non-English catalog clauses remain searchable.
+
 ### 3.4 Ranking
 
 `HybridRanker` merges BM25, semantic, evidence, and popularity rankings using
@@ -123,14 +128,19 @@ The evidence route combines:
 - intent cards filtered to the exact category;
 - previous-intent rank after an override.
 
+For intent overrides, a slot reconciler combines the retired conversation's
+catalog-clause coverage with the newly revealed hard constraint. This preserves
+useful history without treating superseded preferences as current filters.
+
 Category-filtered intent evidence is important when a generic requirement such
 as “cotton” matches many products across the entire catalog.
 
 The response policy initially exposes a small number of high-confidence items.
-It then walks through a stable Top-10 ladder so successive turns provide new
-coverage without randomly reshuffling the same products. If the original Top
-10 is exhausted, controlled category or previous-intent exploration is used on
-later turns.
+It then walks through a stable Top-10 ladder, exposing the first four candidates
+individually before returning the remaining batch. Successive turns therefore
+provide new coverage without randomly reshuffling the same products. If the
+original Top 10 is exhausted, controlled prefix, category, or previous-intent
+exploration is used on later turns.
 
 ### 3.5 Response construction and validation
 
@@ -213,8 +223,8 @@ results:
 
 | Test set | Sessions | Hit Rate@10 | MRR | MTTC | Efficiency | TechnicalScore |
 |---|---:|---:|---:|---:|---:|---:|
-| Default public | 200 | 0.995 | 0.974881 | 2.495 | 0.8505 | **0.960064** |
-| Extended holdout | 500 | 0.996 | 0.961056 | 2.768 | 0.8232 | **0.950957** |
+| Default public | 200 | 1.000 | 0.990833 | 2.235 | 0.8765 | **0.972550** |
+| Extended holdout | 500 | 1.000 | 0.990900 | 2.358 | 0.8642 | **0.970110** |
 
 The score is calculated as:
 
@@ -264,4 +274,3 @@ Potential improvements that preserve the current design include:
 - adding richer attribute parsing for numeric size and price ranges;
 - splitting `starter/agent.py` into internal `state`, `intent`, `retrieval`,
   `ranking`, and `policy` modules while keeping the official interface stable.
-

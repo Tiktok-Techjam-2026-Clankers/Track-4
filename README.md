@@ -39,8 +39,8 @@ Using the supplied deterministic evaluator and frozen 50,000-product catalog:
 
 | Test set | Sessions | Hit Rate@10 | MRR | MTTC | TechnicalScore |
 |---|---:|---:|---:|---:|---:|
-| Default public | 200 | 0.995 | 0.974881 | 2.495 | **0.960064** |
-| Extended holdout | 500 | 0.996 | 0.961056 | 2.768 | **0.950957** |
+| Default public | 200 | 1.000 | 0.990833 | 2.235 | **0.972550** |
+| Extended holdout | 500 | 1.000 | 0.990900 | 2.358 | **0.970110** |
 
 The extended file is an additional local holdout and is not used by the agent at
 runtime. No sample IDs or target labels are embedded in the implementation.
