@@ -224,7 +224,7 @@ results:
 | Test set | Sessions | Hit Rate@10 | MRR | MTTC | Efficiency | TechnicalScore |
 |---|---:|---:|---:|---:|---:|---:|
 | Default public | 200 | 1.000 | 0.990833 | 2.235 | 0.8765 | **0.972550** |
-| Extended holdout | 500 | 1.000 | 0.990900 | 2.358 | 0.8642 | **0.970110** |
+| Extended holdout | 500 | 0.996 | 0.988233 | 2.382 | 0.8618 | **0.966830** |
 
 The score is calculated as:
 
@@ -233,7 +233,7 @@ Efficiency = clip((11 - MTTC) / 10, 0, 1)
 TechnicalScore = 0.50 × HitRate@10 + 0.30 × MRR + 0.20 × Efficiency
 ```
 
-The unit and evaluator-contract suite contains 11 passing tests. Aggregate
+The unit and evaluator-contract suite contains 28 passing tests. Aggregate
 machine-readable results are stored in `docs/independent_agent_results.json`.
 
 ## 8. Runtime Characteristics

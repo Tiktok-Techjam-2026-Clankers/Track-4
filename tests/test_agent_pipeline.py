@@ -40,6 +40,20 @@ class IntentAndMemoryTest(unittest.TestCase):
         self.assertEqual(memory.intent, "override")
         self.assertEqual(len(memory.previous_intents), 1)
 
+    def test_natural_override_phrases_replace_stale_requirements(self) -> None:
+        classifier = IntentClassifier()
+        for phrase in (
+            "Change of plan: white casual sneakers",
+            "Scrap that; white casual sneakers",
+            "Let me correct myself: white casual sneakers",
+        ):
+            with self.subTest(phrase=phrase):
+                memory = ConversationMemory({})
+                memory.observe("black running shoes", classifier)
+                memory.observe(phrase, classifier)
+                self.assertEqual(memory.intent, "override")
+                self.assertNotIn("black", memory.query())
+
     def test_boundary_reply_is_remembered_but_not_searched(self) -> None:
         memory = ConversationMemory({})
         classifier = IntentClassifier()
@@ -50,6 +64,16 @@ class IntentAndMemoryTest(unittest.TestCase):
         self.assertEqual(memory.query(), "walking shoes")
         self.assertIn("color", memory.declined_attributes)
         self.assertEqual(len(memory.history), 2)
+
+    def test_natural_no_preference_reply_is_not_added_to_search(self) -> None:
+        memory = ConversationMemory({})
+        classifier = IntentClassifier()
+        memory.observe("walking shoes", classifier)
+        memory.last_question = "color"
+        memory.observe("No strong feelings on colour", classifier)
+
+        self.assertEqual(memory.query(), "walking shoes")
+        self.assertIn("color", memory.declined_attributes)
 
     def test_conversation_memories_are_isolated(self) -> None:
         classifier = IntentClassifier()
@@ -117,6 +141,23 @@ class RetrievalAndRankingTest(unittest.TestCase):
             {"blue": 0.0, "red": 100.0},
         )
         self.assertEqual(ranked[0], "blue")
+
+    def test_fuzzy_cards_match_natural_semantic_phrases(self) -> None:
+        index = IntentCardIndex(
+            ["target", "other"],
+            [
+                ["waterresistant", "insulated", "adjustable"],
+                ["silk", "formal", "dry clean"],
+            ],
+        )
+        ranked = index.fuzzy_search(
+            ["Something that keeps water out, keeps heat in, and is easy to adjust"],
+            ["target", "other"],
+            {"target": 0.0, "other": 100.0},
+            set(),
+            limit=2,
+        )
+        self.assertEqual(ranked[0], "target")
 
     def test_override_reconciles_old_and_new_card_constraints(self) -> None:
         index = IntentCardIndex(

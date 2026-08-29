@@ -69,8 +69,8 @@ asserted three ways in `tests/test_custom_evaluator_1.py`:
 1. Opening and reply strings are compared against `initial_message` and
    `customer_reply` directly.
 2. A full `run_persona` is compared against `evaluate` on a synthetic catalogue.
-3. Published numbers are reproduced on the real agent — `0.995 / 0.974881 /
-   2.495 / 0.8505 / 0.960064`, matching `docs/independent_agent_results.json`.
+3. Published numbers are reproduced on the real agent — `1.0 / 0.990833 /
+   2.235 / 0.8765 / 0.972550`, matching `docs/independent_agent_results.json`.
 
 If the control drifts, the harness is wrong and the deltas mean nothing.
 
@@ -101,6 +101,17 @@ python -m evaluator.custom_evaluator_1 --dataset data/private_set.jsonl --limit 
 
 The report is written to `custom_evaluator_1_results.json` (gitignored) and a comparison table
 is printed to stdout.
+
+## Current robustness results
+
+Two byte-identical runs on the 200 public sessions produced:
+
+| Persona | Hit@10 | MRR | MTTC | Efficiency | TechnicalScore |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `verbatim` | 1.000 | 0.990833 | 2.235 | 0.8765 | **0.972550** |
+| `paraphrase` | 1.000 | 0.992381 | 2.775 | 0.8225 | **0.962214** |
+| `terse` | 0.995 | 0.991667 | 2.695 | 0.8305 | **0.961100** |
+| `terse_paraphrase` | 1.000 | 0.994167 | 2.875 | 0.8125 | **0.960750** |
 
 ## Scope
 

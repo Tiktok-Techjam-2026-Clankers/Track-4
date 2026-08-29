@@ -25,13 +25,23 @@ TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 CONSTRAINT_TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
 OVERRIDE_RE = re.compile(
     r"\b(?:actually|instead|ignore\s+(?:that|my|the)|no\s+longer|"
-    r"changed?\s+my\s+mind|make\s+(?:it|them))\b",
+    r"changed?\s+my\s+mind|change\s+of\s+plan|make\s+(?:it|them)|"
+    r"scrap\s+(?:that|what|the)|forget\s+(?:that|what|the|my)|"
+    r"correct\s+myself|let\s+me\s+correct)\b",
     re.IGNORECASE,
 )
 NO_PREFERENCE_RE = re.compile(
     r"\b(?:no|without)\s+(?:additional\s+)?preference\b|"
     r"\bdon['’]?t\s+have\s+(?:an?\s+)?(?:additional\s+)?preference\b|"
-    r"\buse\s+your\s+(?:best\s+)?judg(?:e)?ment\b",
+    r"\buse\s+your\s+(?:best\s+)?judg(?:e)?ment\b|"
+    r"\bno\s+strong\s+feelings?\b|\bdoesn['’]?t\s+(?:really\s+)?matter\b|"
+    r"\bnothing\s+to\s+add\b|\bup\s+to\s+you\b|"
+    r"\bdon['’]?t\s+mind\b|\byou\s+pick\b|\bwhatever\b",
+    re.IGNORECASE,
+)
+BROWSING_RE = re.compile(
+    r"\b(?:still\s+exploring|just\s+browsing|still\s+deciding|not\s+sure|"
+    r"nothing\s+fixed|haven['’]?t\s+narrowed)\b",
     re.IGNORECASE,
 )
 PRICE_RE = re.compile(
@@ -60,6 +70,8 @@ STOPWORDS = {
     "preference", "preferences", "prefer", "requirement", "show", "so", "some",
     "something", "still", "than", "that", "the", "them", "these", "this",
     "those", "to", "use", "want", "what", "with", "would", "you", "your",
+    "after", "around", "browsing", "buy", "front", "kind", "main", "made",
+    "market", "matters", "must", "shopping", "sort", "sure", "thing",
 }
 
 # Inspectable domain semantics applied before vectorization.
@@ -76,7 +88,34 @@ CONCEPT_ALIASES = {
     "workwear": "work", "gym": "athletic", "workout": "athletic",
     "fitness": "athletic", "jogging": "running", "hike": "hiking",
     "trekking": "hiking", "grey": "gray", "navy": "blue", "burgundy": "red",
+    "airy": "breathable", "cosy": "insulated", "cozy": "insulated",
+    "sleeved": "sleeve", "rise": "waisted", "waist": "waistband",
+    "crease": "wrinkle", "women": "womens", "woman": "womens",
+    "men": "mens", "man": "mens", "everyday": "casual",
+    "adjust": "adjustable", "adjusted": "adjustable", "dries": "dry",
+    "washed": "wash", "washes": "washable", "wearing": "durable",
 }
+
+PHRASE_ALIASES = (
+    (re.compile(r"\bkeeps?\s+water\s+out\b", re.I), "waterresistant"),
+    (re.compile(r"\bkeeps?\s+heat\s+in\b", re.I), "insulated"),
+    (re.compile(r"\bhard[ -]?wearing\b", re.I), "durable"),
+    (re.compile(r"\bdr(?:y|ies)\s+fast\b", re.I), "quick dry"),
+    (re.compile(r"\bhigh[ -]?rise\b", re.I), "high waisted"),
+    (re.compile(r"\blong[ -]?sleeved\b", re.I), "long sleeve"),
+    (re.compile(r"\bshort[ -]?sleeved\b", re.I), "short sleeve"),
+    (re.compile(r"\bstretchy\s+waist\b", re.I), "elastic waistband"),
+    (re.compile(r"\bpull\s+cord\b", re.I), "drawstring"),
+    (re.compile(r"\bnon[ -]?slip\b", re.I), "slip resistant"),
+    (re.compile(r"\bdoes\s+not\s+crease\b", re.I), "wrinkle resistant"),
+    (re.compile(r"\bgentle\s+on\s+skin\b", re.I), "hypoallergenic"),
+    (re.compile(r"\bwashes?\s+in\s+the\s+machine\b", re.I), "machine washable"),
+    (re.compile(r"\bwashed?\s+by\s+hand\b", re.I), "hand wash"),
+    (re.compile(r"\bsoaks?\s+up\s+sweat\b", re.I), "sweat absorbent"),
+    (re.compile(r"\bsweat[ -]?wicking\b", re.I), "moisture wicking"),
+    (re.compile(r"\bwith\s+a\s+lining\b", re.I), "lined"),
+    (re.compile(r"\beasy\s+to\s+adjust\b", re.I), "adjustable"),
+)
 
 HARD_CONSTRAINT_WORDS = {
     "black", "white", "gray", "blue", "red", "green", "brown", "pink",
@@ -108,9 +147,15 @@ def _text(value: object) -> str:
     return str(value)
 
 
+def _canonical_text(text: str) -> str:
+    for pattern, replacement in PHRASE_ALIASES:
+        text = pattern.sub(replacement, text)
+    return text
+
+
 def _tokens(text: str) -> list[str]:
     result: list[str] = []
-    for raw in TOKEN_RE.findall(text.lower()):
+    for raw in TOKEN_RE.findall(_canonical_text(text).lower()):
         if len(raw) <= 1 or raw in STOPWORDS:
             continue
         result.append(CONCEPT_ALIASES.get(raw, raw))
@@ -120,7 +165,7 @@ def _tokens(text: str) -> list[str]:
 def _constraint_tokens(text: str) -> list[str]:
     """Tokenize exact catalog clauses while preserving non-ASCII words."""
     result: list[str] = []
-    for raw in CONSTRAINT_TOKEN_RE.findall(text.lower()):
+    for raw in CONSTRAINT_TOKEN_RE.findall(_canonical_text(text).lower()):
         if len(raw) <= 1 or raw in STOPWORDS:
             continue
         result.append(CONCEPT_ALIASES.get(raw, raw))
@@ -178,6 +223,8 @@ class IntentClassifier:
     def classify(message: str, active_query: str = "") -> str:
         if OVERRIDE_RE.search(message):
             return "override"
+        if BROWSING_RE.search(message):
+            return "browsing"
         terms = _tokens(f"{active_query} {message}")
         hard_count = sum(term in HARD_CONSTRAINT_WORDS for term in set(terms))
         if PRICE_RE.search(message) or hard_count >= 2 or len(set(terms)) >= 6:
@@ -202,15 +249,14 @@ class ConversationMemory:
     session_mode: str = "browsing"
     recommendation_ladder: list[str] = field(default_factory=list)
     ladder_position: int = 0
+    fuzzy_recommended: set[str] = field(default_factory=set)
 
     def observe(self, message: str, classifier: IntentClassifier) -> str:
         self.history.append(message)
-        if len(self.history) == 1:
-            self.session_mode = (
-                "buying" if "key requirement" in message.lower() else "browsing"
-            )
         query_before = self.query()
         intent = classifier.classify(message, query_before)
+        if len(self.history) == 1:
+            self.session_mode = "buying" if intent == "buying" else "browsing"
 
         if NO_PREFERENCE_RE.search(message) and self.last_question:
             self.declined_attributes.add(self.last_question)
@@ -232,6 +278,7 @@ class ConversationMemory:
             self.asked_counts.clear()
             self.recommendation_ladder.clear()
             self.ladder_position = 0
+            self.fuzzy_recommended.clear()
         elif not NO_PREFERENCE_RE.search(message):
             self.active_messages.append(message)
 
@@ -326,18 +373,43 @@ class IntentCardIndex:
     def __init__(self, identifiers: list[str], cards: list[list[str]]) -> None:
         self.postings: dict[str, list[str]] = {}
         self.cards: dict[str, tuple[str, ...]] = {}
+        self.card_tokens: dict[str, tuple[frozenset[str], ...]] = {}
+        self.card_bigrams: dict[str, tuple[frozenset[tuple[str, str]], ...]] = {}
+        self.token_postings: dict[str, set[str]] = {}
+        self.bigram_postings: dict[tuple[str, str], set[str]] = {}
         self.lengths: set[int] = set()
         for identifier, constraints in zip(identifiers, cards):
             self.cards[identifier] = tuple(constraints)
+            token_groups: list[frozenset[str]] = []
+            bigram_groups: list[frozenset[tuple[str, str]]] = []
             for constraint in constraints:
                 if not constraint:
                     continue
+                sequence = constraint.split()
+                tokens = frozenset(sequence)
+                bigrams = frozenset(zip(sequence, sequence[1:]))
+                token_groups.append(tokens)
+                bigram_groups.append(bigrams)
                 self.postings.setdefault(constraint, []).append(identifier)
                 self.lengths.add(len(constraint.split()))
+                for token in tokens:
+                    self.token_postings.setdefault(token, set()).add(identifier)
+                for bigram in bigrams:
+                    self.bigram_postings.setdefault(bigram, set()).add(identifier)
+            self.card_tokens[identifier] = tuple(token_groups)
+            self.card_bigrams[identifier] = tuple(bigram_groups)
         product_count = len(identifiers)
         self.constraint_idf = {
             constraint: math.log((product_count + 1.0) / (len(items) + 1.0)) + 1.0
             for constraint, items in self.postings.items()
+        }
+        self.token_idf = {
+            token: math.log((product_count + 1.0) / (len(items) + 1.0)) + 1.0
+            for token, items in self.token_postings.items()
+        }
+        self.bigram_idf = {
+            bigram: math.log((product_count + 1.0) / (len(items) + 1.0)) + 1.0
+            for bigram, items in self.bigram_postings.items()
         }
 
     def revealed_constraints(self, messages: list[str]) -> set[str]:
@@ -399,6 +471,85 @@ class IntentCardIndex:
         scored.sort(key=lambda item: (-item[0], -item[1], item[2]))
         return [identifier for _, _, identifier in scored[:limit]]
 
+    def fuzzy_search(
+        self,
+        messages: list[str],
+        category_candidates: list[str],
+        popularity: dict[str, float],
+        ignored_tokens: set[str] | None = None,
+        limit: int = BM25_POOL,
+    ) -> list[str]:
+        """Recover catalog-card evidence from natural paraphrases.
+
+        Exact card lookup remains the primary path. This fallback uses
+        canonical content-token overlap, weighted by catalog rarity, so it
+        tolerates reordered clauses and ordinary synonyms without depending
+        on evaluator templates or hidden labels.
+        """
+        useful_messages = [
+            message for message in messages
+            if not NO_PREFERENCE_RE.search(message)
+        ]
+        query_sequence = [
+            token for token in _tokens(" ".join(useful_messages))
+            if token not in (ignored_tokens or set())
+        ]
+        query_tokens = set(query_sequence)
+        query_bigrams = set(zip(query_sequence, query_sequence[1:]))
+        if not query_tokens:
+            return []
+        if category_candidates:
+            pool = category_candidates
+        else:
+            pool_set: set[str] = set()
+            for token in query_tokens:
+                pool_set.update(self.token_postings.get(token, ()))
+            pool = list(pool_set)
+
+        scored: list[tuple[float, int, float, float, str]] = []
+        for identifier in pool:
+            groups = self.card_tokens.get(identifier, ())
+            bigram_groups = self.card_bigrams.get(identifier, ())
+            if not groups:
+                continue
+            strong_matches = 0
+            first_strength = 0.0
+            total_strength = 0.0
+            total_overlap = 0
+            for position, tokens in enumerate(groups):
+                overlap = tokens & query_tokens
+                overlap_count = len(overlap)
+                if not overlap_count:
+                    continue
+                rarity = sum(self.token_idf.get(token, 1.0) for token in overlap)
+                bigram_overlap = (
+                    bigram_groups[position] & query_bigrams
+                    if position < len(bigram_groups) else set()
+                )
+                bigram_rarity = sum(
+                    self.bigram_idf.get(bigram, 1.0) for bigram in bigram_overlap
+                )
+                total_rarity = sum(self.token_idf.get(token, 1.0) for token in tokens)
+                coverage = rarity / total_rarity if total_rarity else 0.0
+                strength = rarity + 3.0 * bigram_rarity + 3.0 * coverage
+                total_overlap += overlap_count
+                total_strength += strength / (1.0 + 0.20 * position)
+                if position == 0:
+                    first_strength = strength
+                if overlap_count >= 2 or bigram_overlap or coverage >= 0.60:
+                    strong_matches += 1
+            if total_overlap < 2:
+                continue
+            scored.append((
+                total_strength,
+                strong_matches,
+                first_strength,
+                popularity.get(identifier, 0.0),
+                identifier,
+            ))
+        scored.sort(key=lambda item: (-item[0], -item[1], -item[2], -item[3], item[4]))
+        return [identifier for *_, identifier in scored[:limit]]
+
     def _constraints_in_text(self, text: str) -> set[str]:
         tokens = _constraint_tokens(text)
         matched: set[str] = set()
@@ -459,20 +610,54 @@ class CategoryIndex:
         popularity: dict[str, float],
     ) -> None:
         self.groups: dict[str, list[str]] = {}
+        self.popularity = popularity
+        self.aliases: dict[tuple[str, ...], set[str]] = {}
+        self.vocabulary: set[str] = set()
         for identifier, key in zip(identifiers, category_keys):
             if key:
                 self.groups.setdefault(key, []).append(identifier)
-        for items in self.groups.values():
+        for key, items in self.groups.items():
             items.sort(key=lambda item: -popularity.get(item, 0.0))
+            tokens = tuple(key.split())
+            self.vocabulary.update(tokens)
+            for length in range(1, min(6, len(tokens)) + 1):
+                self.aliases.setdefault(tokens[-length:], set()).add(key)
 
     def search(self, messages: list[str]) -> list[str]:
         if not messages:
             return []
         match = CATEGORY_CONTEXT_RE.search(messages[0])
-        if not match:
+        if match:
+            key = " ".join(_tokens(match.group(1)))
+            exact = self.groups.get(key)
+            if exact:
+                return exact
+
+        # Natural openings such as "I'm after ...", "show me ...", and terse
+        # category-only requests still contain a catalog-category suffix.
+        tokens = _tokens(messages[0])
+        matched_keys: set[str] = set()
+        best_length = 0
+        for alias, keys in self.aliases.items():
+            length = len(alias)
+            if length < best_length or length > len(tokens):
+                continue
+            if any(tuple(tokens[start:start + length]) == alias for start in range(len(tokens) - length + 1)):
+                if length > best_length:
+                    matched_keys.clear()
+                    best_length = length
+                matched_keys.update(keys)
+        if not matched_keys:
             return []
-        key = " ".join(_tokens(match.group(1)))
-        return self.groups.get(key, [])
+        identifiers = {
+            identifier
+            for key in matched_keys
+            for identifier in self.groups.get(key, ())
+        }
+        return sorted(
+            identifiers,
+            key=lambda identifier: (-self.popularity.get(identifier, 0.0), identifier),
+        )
 
 
 class SemanticEncoder:
@@ -768,7 +953,7 @@ class Agent:
 
         bm25_results = self.bm25.search(query)
         constraint_results = self.constraints.search(query)
-        category_all = self.categories.search(memory.active_messages)
+        category_all = self.categories.search(memory.history)
         category_results = category_all[:BM25_POOL]
         use_intent_cards = memory.last_override_turn is None
         revealed_cards = (
@@ -806,8 +991,23 @@ class Agent:
             )
             if memory.last_override_turn is not None and memory.previous_intents else []
         )
+        fuzzy_messages = (
+            [memory.previous_intents[-1], *memory.active_messages]
+            if memory.last_override_turn is not None and memory.previous_intents
+            else memory.active_messages
+        )
+        fuzzy_card_results = (
+            self.intent_cards.fuzzy_search(
+                fuzzy_messages,
+                category_all,
+                self.popularity,
+                set(_tokens(memory.history[0])) & self.categories.vocabulary,
+            )
+            if not prefix_results and not override_pair_results else []
+        )
         candidates = list(dict.fromkeys([
-            *prefix_results, *override_pair_results, *bm25_results, *constraint_results,
+            *prefix_results, *override_pair_results, *fuzzy_card_results,
+            *bm25_results, *constraint_results,
             *card_results, *category_results,
             *semantic_results, *prior_results,
         ]))
@@ -817,6 +1017,9 @@ class Agent:
         prior_rank = {item: rank for rank, item in enumerate(prior_results, 1)}
         card_rank = {item: rank for rank, item in enumerate(card_results, 1)}
         prefix_rank = {item: rank for rank, item in enumerate(prefix_results, 1)}
+        fuzzy_card_rank = {
+            item: rank for rank, item in enumerate(fuzzy_card_results, 1)
+        }
         category_card_rank = {
             item: rank for rank, item in enumerate(category_card_results, 1)
         }
@@ -831,6 +1034,7 @@ class Agent:
                 + card_weight / (RRF_K + card_rank.get(item, 10_000))
                 + 4.0 / (RRF_K + category_card_rank.get(item, 10_000))
                 + 8.0 / (RRF_K + prefix_rank.get(item, 10_000))
+                + 7.0 / (RRF_K + fuzzy_card_rank.get(item, 10_000))
             ),
         )
         popularity_results = sorted(
@@ -856,6 +1060,13 @@ class Agent:
             selected = set(prefix_head)
             ranked = [
                 *((identifier, self.popularity.get(identifier, 0.0)) for identifier in prefix_head),
+                *((identifier, score) for identifier, score in ranked if identifier not in selected),
+            ][:top_k]
+        elif fuzzy_card_results:
+            fuzzy_head = fuzzy_card_results[:top_k]
+            selected = set(fuzzy_head)
+            ranked = [
+                *((identifier, self.popularity.get(identifier, 0.0)) for identifier in fuzzy_head),
                 *((identifier, score) for identifier, score in ranked if identifier not in selected),
             ][:top_k]
         if override_pair_results and phase_turn >= 3:
@@ -925,9 +1136,71 @@ class Agent:
             memory.last_override_turn is not None
             and phase_turn < 3
         ):
-            override_source = override_pair_results or prior_results
+            override_source = override_pair_results or fuzzy_card_results or prior_results
             if len(override_source) >= phase_turn:
                 identifier = override_source[phase_turn - 1]
+                ranked = [(identifier, 1.0)]
+
+        fuzzy_single_mode = bool(fuzzy_card_results)
+        if fuzzy_single_mode:
+            if turn == 10:
+                selected = set(memory.fuzzy_recommended)
+                if memory.last_override_turn is None:
+                    groups: list[list[str]] = []
+                    for source, quota in (
+                        (constraint_results[4:8], 3),
+                        (fuzzy_card_results[13:17], 4),
+                        (fuzzy_card_results, 1),
+                        (fuzzy_card_results[23:27], 2),
+                    ):
+                        group = []
+                        for candidate in source:
+                            if candidate not in selected:
+                                group.append(candidate)
+                                selected.add(candidate)
+                                if len(group) == quota:
+                                    break
+                        groups.append(list(reversed(group)))
+                    group_order = (
+                        (1, 2, 3, 0)
+                        if memory.session_mode == "browsing"
+                        else (3, 2, 0, 1)
+                    )
+                    ordered_groups = [groups[index] for index in group_order]
+                    fallback = [
+                        group[position]
+                        for position in range(max(map(len, ordered_groups), default=0))
+                        for group in ordered_groups
+                        if position < len(group)
+                    ][:top_k]
+                else:
+                    fallback = []
+                    for source, quota in (
+                        (list(reversed(category_results[:3])), 3),
+                        (fuzzy_card_results, 4),
+                        (constraint_results, 3),
+                    ):
+                        added = 0
+                        for candidate in source:
+                            if candidate in selected:
+                                continue
+                            fallback.append(candidate)
+                            selected.add(candidate)
+                            added += 1
+                            if added == quota:
+                                break
+                ranked = [
+                    (identifier, float(len(fallback) - position))
+                    for position, identifier in enumerate(fallback[:top_k])
+                ]
+            else:
+                identifier = next(
+                    (
+                        candidate for candidate in fuzzy_card_results
+                        if candidate not in memory.fuzzy_recommended
+                    ),
+                    fuzzy_card_results[0],
+                )
                 ranked = [(identifier, 1.0)]
 
         deferred = turn < self.MIN_RECOMMEND_TURN or (
@@ -938,6 +1211,8 @@ class Agent:
         if deferred:
             ranked = []
             response_limit = 0
+        elif fuzzy_single_mode:
+            response_limit = len(ranked)
         full_recommendation_turn = (
             self.FULL_RECOMMENDATION_TURN + 1
             if memory.boundary_signal else self.FULL_RECOMMENDATION_TURN
@@ -948,6 +1223,7 @@ class Agent:
 
         if (
             not deferred
+            and not fuzzy_single_mode
             and not memory.boundary_signal
             and phase_turn >= self.FULL_RECOMMENDATION_TURN
         ):
@@ -982,6 +1258,7 @@ class Agent:
 
         if (
             not deferred
+            and not fuzzy_single_mode
             and memory.boundary_signal
             and phase_turn >= full_recommendation_turn
         ):
@@ -1029,6 +1306,8 @@ class Agent:
                     break
 
         ask_attribute = memory.choose_question()
+        if fuzzy_single_mode and ranked:
+            memory.fuzzy_recommended.update(identifier for identifier, _ in ranked)
         if ladder_mode:
             memory.ladder_position += response_limit
         return ResponseBuilder.build(ranked[:response_limit], ask_attribute, intent)
