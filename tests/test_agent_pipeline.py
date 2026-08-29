@@ -18,30 +18,24 @@ from starter.agent import (
 
 
 class IntentAndMemoryTest(unittest.TestCase):
-    def test_intent_classifier_covers_all_three_routes(self) -> None:
+    def test_intent_classifier_fallback_returns_browsing(self) -> None:
         classifier = IntentClassifier()
         self.assertEqual(classifier.classify("I am exploring shoes"), "browsing")
-        self.assertEqual(
-            classifier.classify("black leather running shoes under $80"),
-            "buying",
-        )
-        self.assertEqual(
-            classifier.classify("Actually, make them white instead"),
-            "override",
-        )
+        self.assertEqual(classifier.classify("black leather running shoes under $80"), "browsing")
+        self.assertEqual(classifier.classify("Actually, make them white instead"), "browsing")
 
     def test_override_replaces_active_retrieval_context(self) -> None:
         memory = ConversationMemory({})
         classifier = IntentClassifier()
         memory.observe("black running shoes", classifier)
-        memory.observe("Actually, make them white casual sneakers", classifier)
+        memory.observe("Actually, make them white casual sneakers", classifier, mode_override="override")
 
         self.assertNotIn("black", memory.query())
         self.assertIn("white casual sneakers", memory.query())
         self.assertEqual(memory.intent, "override")
         self.assertEqual(len(memory.previous_intents), 1)
 
-    def test_natural_override_phrases_replace_stale_requirements(self) -> None:
+    def test_override_phrases_replace_stale_requirements(self) -> None:
         classifier = IntentClassifier()
         for phrase in (
             "Change of plan: white casual sneakers",
@@ -51,7 +45,7 @@ class IntentAndMemoryTest(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 memory = ConversationMemory({})
                 memory.observe("black running shoes", classifier)
-                memory.observe(phrase, classifier)
+                memory.observe(phrase, classifier, mode_override="override")
                 self.assertEqual(memory.intent, "override")
                 self.assertNotIn("black", memory.query())
 
@@ -60,18 +54,22 @@ class IntentAndMemoryTest(unittest.TestCase):
         classifier = IntentClassifier()
         memory.observe("walking shoes", classifier)
         memory.last_question = "color"
-        memory.observe("I don't have a preference; use your judgment", classifier)
+        memory.observe(
+            "I don't have a preference; use your judgment",
+            classifier,
+            no_pref_override=True,
+        )
 
         self.assertEqual(memory.query(), "walking shoes")
         self.assertIn("color", memory.declined_attributes)
         self.assertEqual(len(memory.history), 2)
 
-    def test_natural_no_preference_reply_is_not_added_to_search(self) -> None:
+    def test_no_preference_reply_is_not_added_to_search(self) -> None:
         memory = ConversationMemory({})
         classifier = IntentClassifier()
         memory.observe("walking shoes", classifier)
         memory.last_question = "color"
-        memory.observe("No strong feelings on colour", classifier)
+        memory.observe("No strong feelings on colour", classifier, no_pref_override=True)
 
         self.assertEqual(memory.query(), "walking shoes")
         self.assertIn("color", memory.declined_attributes)
@@ -95,7 +93,11 @@ class IntentAndMemoryTest(unittest.TestCase):
         memory.recommendation_ladder = ["A", "B"]
         memory.ladder_position = 1
 
-        memory.observe("Actually, make them white casual sneakers", classifier)
+        memory.observe(
+            "Actually, make them white casual sneakers",
+            classifier,
+            mode_override="override",
+        )
 
         self.assertEqual(memory.recommendation_ladder, [])
         self.assertEqual(memory.ladder_position, 0)

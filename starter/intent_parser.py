@@ -1,9 +1,9 @@
 """LLM-first natural-language understanding layer for the shopping copilot.
 
 Provides three IntentParser implementations:
-- DeterministicIntentParser: regex-based, zero network calls
-- GeminiIntentParser: calls Gemini Flash-Lite for structured intent extraction
-- HybridIntentParser: template detection -> Gemini -> deterministic fallback
+- DeterministicIntentParser: minimal fallback, zero network calls
+- OpenAIIntentParser: calls OpenAI gpt-4.1-mini for structured intent extraction
+- HybridIntentParser: LLM-first -> deterministic fallback
 
 The LLM extracts structured intent; retrieval and ranking remain deterministic.
 """
@@ -13,7 +13,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 import ssl
 import urllib.error
 import urllib.request
@@ -107,28 +106,15 @@ def validate_intent_result(data: object) -> IntentResult | None:
     )
 
 
-_VERBATIM_PATTERNS = [
-    re.compile(r"^I'm looking for "),
-    re.compile(r"^For that, what matters is: "),
-    re.compile(r"^I don't have an? (?:additional )?preference for "),
-    re.compile(r"^Actually,?\s*(?:please\s+)?ignore my earlier preference"),
-    re.compile(r"^Those options are not quite right yet"),
-]
-
-
-def is_simulator_template(message: str) -> bool:
-    """Return True if the message matches an exact official simulator template."""
-    return any(pattern.search(message) for pattern in _VERBATIM_PATTERNS)
-
 
 def load_api_key() -> str | None:
-    """Load GEMINI_API_KEY from environment or ``.env`` file. Never logs the key.
+    """Load OPENAI_API_KEY from environment or ``.env`` file. Never logs the key.
 
     Checks ``os.environ`` first, then falls back to reading from a ``.env``
     file next to the project root.  When found in ``.env`` the value is
     injected into ``os.environ`` so downstream code sees it too.
     """
-    key = os.environ.get("GEMINI_API_KEY")
+    key = os.environ.get("OPENAI_API_KEY")
     if key and key.strip():
         return key.strip()
     env_path = Path(__file__).resolve().parents[1] / ".env"
@@ -136,10 +122,10 @@ def load_api_key() -> str | None:
         try:
             for line in env_path.read_text(encoding="utf-8").splitlines():
                 stripped = line.strip()
-                if stripped.startswith("GEMINI_API_KEY=") and not stripped.startswith("#"):
+                if stripped.startswith("OPENAI_API_KEY=") and not stripped.startswith("#"):
                     value = stripped.split("=", 1)[1].strip()
                     if value:
-                        os.environ["GEMINI_API_KEY"] = value
+                        os.environ["OPENAI_API_KEY"] = value
                         return value
         except OSError:
             pass
@@ -165,20 +151,16 @@ class DeterministicIntentParser(IntentParser):
         return IntentResult(mode=mode, confidence=1.0, source="deterministic")
 
 
-_GEMINI_ENDPOINT = (
-    "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-)
+_OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions"
 
 _SYSTEM_PROMPT = """\
-Parse this shopping message into structured JSON intent.
+You are a shopping intent parser. Parse the customer message into structured JSON.
 
 Shopping context:
 - Current preferences: {active_query}
 - Turn: {turn}
 - Session mode: {session_mode}
 - Last question asked: {last_question}
-
-Customer message: "{message}"
 
 Return this exact JSON structure:
 {{
@@ -203,13 +185,13 @@ Intent rules:
 - confidence = how clearly the intent is expressed (0.0 = very unclear, 1.0 = crystal clear)"""
 
 
-class GeminiIntentParser(IntentParser):
-    """Calls Gemini API for structured intent extraction with caching."""
+class OpenAIIntentParser(IntentParser):
+    """Calls OpenAI API for structured intent extraction with caching."""
 
     def __init__(
         self,
         api_key: str,
-        model: str = "gemini-3.5-flash-lite",
+        model: str = "gpt-4.1-mini",
         timeout: float = 5.0,
         cache_size: int = 512,
     ) -> None:
@@ -220,26 +202,29 @@ class GeminiIntentParser(IntentParser):
         self._cache_size = cache_size
 
     def parse(self, message: str, conversation_state: dict) -> IntentResult:
-        prompt = _SYSTEM_PROMPT.format(
+        system_prompt = _SYSTEM_PROMPT.format(
             active_query=conversation_state.get("active_query") or "none",
             turn=conversation_state.get("turn", 1),
             session_mode=conversation_state.get("session_mode", "browsing"),
             last_question=conversation_state.get("last_question") or "none",
-            message=message,
         )
 
-        cache_key = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+        cache_key = hashlib.sha256(
+            (system_prompt + message).encode("utf-8")
+        ).hexdigest()
         cached = self._cache.get(cache_key)
         if cached is not None:
             return cached
 
-        parsed, prompt_tokens, completion_tokens = self._call_api(prompt)
+        parsed, prompt_tokens, completion_tokens = self._call_api(
+            system_prompt, message
+        )
         if parsed is None:
-            raise RuntimeError("Gemini API returned no usable response")
+            raise RuntimeError("OpenAI API returned no usable response")
 
         result = validate_intent_result(parsed)
         if result is None:
-            raise ValueError("Gemini response failed schema validation")
+            raise ValueError("OpenAI response failed schema validation")
 
         result.prompt_tokens = prompt_tokens
         result.completion_tokens = completion_tokens
@@ -250,21 +235,27 @@ class GeminiIntentParser(IntentParser):
         self._cache[cache_key] = result
         return result
 
-    def _call_api(self, prompt: str) -> tuple[dict | None, int, int]:
-        url = _GEMINI_ENDPOINT.format(model=self._model) + f"?key={self._api_key}"
+    def _call_api(
+        self, system_prompt: str, user_message: str
+    ) -> tuple[dict | None, int, int]:
         body = json.dumps({
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": 0.0,
-                "maxOutputTokens": 256,
-                "responseMimeType": "application/json",
-            },
+            "model": self._model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            "temperature": 0,
+            "max_tokens": 256,
+            "response_format": {"type": "json_object"},
         }).encode("utf-8")
 
         request = urllib.request.Request(
-            url,
+            _OPENAI_ENDPOINT,
             data=body,
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._api_key}",
+            },
             method="POST",
         )
 
@@ -283,16 +274,15 @@ class GeminiIntentParser(IntentParser):
         ):
             return None, 0, 0
 
-        usage = raw.get("usageMetadata") or {}
-        prompt_tokens = int(usage.get("promptTokenCount", 0))
-        completion_tokens = int(usage.get("candidatesTokenCount", 0))
+        usage = raw.get("usage") or {}
+        prompt_tokens = int(usage.get("prompt_tokens", 0))
+        completion_tokens = int(usage.get("completion_tokens", 0))
 
-        candidates = raw.get("candidates") or []
-        if not candidates:
+        choices = raw.get("choices") or []
+        if not choices:
             return None, prompt_tokens, completion_tokens
 
-        parts = (candidates[0].get("content") or {}).get("parts") or [{}]
-        text = parts[0].get("text", "") if parts else ""
+        text = (choices[0].get("message") or {}).get("content", "")
         if not text:
             return None, prompt_tokens, completion_tokens
 
@@ -303,28 +293,24 @@ class GeminiIntentParser(IntentParser):
 
 
 class HybridIntentParser(IntentParser):
-    """Template detection -> Gemini -> deterministic fallback.
+    """LLM-first intent parser with deterministic fallback.
 
-    Official simulator templates use the deterministic fast path to preserve
-    the existing high scores. All other messages are sent to the LLM when
-    an API key is available. On any failure the deterministic parser is used.
+    All messages are sent to the LLM. On any failure (no API key, timeout,
+    malformed response, low confidence) the deterministic parser is used.
     """
 
     def __init__(
         self,
         deterministic: DeterministicIntentParser,
-        gemini: GeminiIntentParser | None = None,
+        llm: OpenAIIntentParser | None = None,
     ) -> None:
         self.deterministic = deterministic
-        self.gemini = gemini
+        self.llm = llm
 
     def parse(self, message: str, conversation_state: dict) -> IntentResult:
-        if is_simulator_template(message):
-            return self.deterministic.parse(message, conversation_state)
-
-        if self.gemini is not None:
+        if self.llm is not None:
             try:
-                result = self.gemini.parse(message, conversation_state)
+                result = self.llm.parse(message, conversation_state)
                 if result.confidence >= LLM_CONFIDENCE_THRESHOLD:
                     return result
             except Exception:

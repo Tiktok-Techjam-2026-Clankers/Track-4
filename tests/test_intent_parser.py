@@ -1,35 +1,33 @@
 """Unit tests for the LLM intent parser layer.
 
-All Gemini API interactions are mocked — no real network calls.
+All OpenAI API interactions are mocked — no real network calls.
 """
 
 from __future__ import annotations
 
 import json
 import unittest
-from io import BytesIO
 from unittest.mock import MagicMock, patch
 
 from starter.intent_parser import (
     DeterministicIntentParser,
-    GeminiIntentParser,
+    OpenAIIntentParser,
     HybridIntentParser,
     IntentResult,
     LLM_CONFIDENCE_THRESHOLD,
-    is_simulator_template,
     load_api_key,
     validate_intent_result,
 )
 from starter.agent import IntentClassifier
 
 
-def _gemini_response(payload: dict, prompt_tokens: int = 10, completion_tokens: int = 5) -> bytes:
-    """Build a fake Gemini API JSON response."""
+def _openai_response(payload: dict, prompt_tokens: int = 10, completion_tokens: int = 5) -> bytes:
+    """Build a fake OpenAI chat completions JSON response."""
     return json.dumps({
-        "candidates": [{"content": {"parts": [{"text": json.dumps(payload)}]}}],
-        "usageMetadata": {
-            "promptTokenCount": prompt_tokens,
-            "candidatesTokenCount": completion_tokens,
+        "choices": [{"message": {"content": json.dumps(payload)}}],
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
         },
     }).encode()
 
@@ -126,83 +124,24 @@ class ValidateIntentResultTest(unittest.TestCase):
         self.assertNotIn("B08XYZ123", [result.category or ""])
 
 
-class TemplateDetectionTest(unittest.TestCase):
-    def test_verbatim_buying_opening(self) -> None:
-        self.assertTrue(is_simulator_template(
-            "I'm looking for Women's Casual T-Shirts. A key requirement is: cotton."
-        ))
-
-    def test_verbatim_browsing_opening(self) -> None:
-        self.assertTrue(is_simulator_template(
-            "I'm looking for Men's Running Shoes, but I'm still exploring."
-        ))
-
-    def test_verbatim_reveal(self) -> None:
-        self.assertTrue(is_simulator_template(
-            "For that, what matters is: breathable; lightweight."
-        ))
-
-    def test_verbatim_no_preference(self) -> None:
-        self.assertTrue(is_simulator_template(
-            "I don't have an additional preference for color."
-        ))
-
-    def test_verbatim_boundary(self) -> None:
-        self.assertTrue(is_simulator_template(
-            "I don't have a preference for material; please use your judgment."
-        ))
-
-    def test_verbatim_override(self) -> None:
-        self.assertTrue(is_simulator_template(
-            "Actually, ignore my earlier preference. What I need is: cotton."
-        ))
-
-    def test_verbatim_nudge(self) -> None:
-        self.assertTrue(is_simulator_template(
-            "Those options are not quite right yet. Ask me about one specific attribute."
-        ))
-
-    def test_paraphrase_not_detected(self) -> None:
-        self.assertFalse(is_simulator_template(
-            "Hi, I'm after Women's T-Shirts, and it needs to be cotton."
-        ))
-        self.assertFalse(is_simulator_template(
-            "What matters there is breathable and lightweight."
-        ))
-        self.assertFalse(is_simulator_template(
-            "No strong feelings on color."
-        ))
-
-    def test_natural_language_not_detected(self) -> None:
-        self.assertFalse(is_simulator_template(
-            "On second thought, white would suit me better."
-        ))
-        self.assertFalse(is_simulator_template(
-            "Anything except leather."
-        ))
-        self.assertFalse(is_simulator_template(
-            "Something suitable for walking around Tokyo in December."
-        ))
-
-
 class DeterministicIntentParserTest(unittest.TestCase):
     def setUp(self) -> None:
         self.classifier = IntentClassifier()
         self.parser = DeterministicIntentParser(self.classifier)
 
-    def test_classifies_browsing(self) -> None:
+    def test_fallback_returns_browsing(self) -> None:
         result = self.parser.parse("just looking at shoes", {"active_query": ""})
         self.assertEqual(result.mode, "browsing")
         self.assertEqual(result.source, "deterministic")
         self.assertEqual(result.confidence, 1.0)
 
-    def test_classifies_buying(self) -> None:
+    def test_all_messages_return_browsing(self) -> None:
         result = self.parser.parse("black leather running shoes under $80", {"active_query": ""})
-        self.assertEqual(result.mode, "buying")
+        self.assertEqual(result.mode, "browsing")
 
-    def test_classifies_override(self) -> None:
+    def test_override_message_returns_browsing(self) -> None:
         result = self.parser.parse("Actually, make them white instead", {"active_query": ""})
-        self.assertEqual(result.mode, "override")
+        self.assertEqual(result.mode, "browsing")
 
     def test_no_token_usage(self) -> None:
         result = self.parser.parse("shoes", {"active_query": ""})
@@ -210,13 +149,13 @@ class DeterministicIntentParserTest(unittest.TestCase):
         self.assertEqual(result.completion_tokens, 0)
 
 
-class GeminiIntentParserTest(unittest.TestCase):
+class OpenAIIntentParserTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.parser = GeminiIntentParser(api_key="test-key", timeout=2.0)
+        self.parser = OpenAIIntentParser(api_key="test-key", timeout=2.0)
 
     @patch("starter.intent_parser.urllib.request.urlopen")
     def test_successful_parse(self, mock_urlopen) -> None:
-        mock_urlopen.return_value = _mock_urlopen(_gemini_response({
+        mock_urlopen.return_value = _mock_urlopen(_openai_response({
             "mode": "override",
             "operation": "replace",
             "confidence": 0.9,
@@ -245,8 +184,8 @@ class GeminiIntentParserTest(unittest.TestCase):
     def test_malformed_json_raises(self, mock_urlopen) -> None:
         response = MagicMock()
         response.read.return_value = json.dumps({
-            "candidates": [{"content": {"parts": [{"text": "not json at all"}]}}],
-            "usageMetadata": {},
+            "choices": [{"message": {"content": "not json at all"}}],
+            "usage": {},
         }).encode()
         response.__enter__ = lambda s: s
         response.__exit__ = MagicMock(return_value=False)
@@ -257,7 +196,7 @@ class GeminiIntentParserTest(unittest.TestCase):
 
     @patch("starter.intent_parser.urllib.request.urlopen")
     def test_invalid_schema_raises(self, mock_urlopen) -> None:
-        mock_urlopen.return_value = _mock_urlopen(_gemini_response({
+        mock_urlopen.return_value = _mock_urlopen(_openai_response({
             "mode": "INVALID_MODE",
             "operation": "add",
             "confidence": 0.5,
@@ -267,7 +206,7 @@ class GeminiIntentParserTest(unittest.TestCase):
 
     @patch("starter.intent_parser.urllib.request.urlopen")
     def test_caches_identical_requests(self, mock_urlopen) -> None:
-        mock_urlopen.return_value = _mock_urlopen(_gemini_response({
+        mock_urlopen.return_value = _mock_urlopen(_openai_response({
             "mode": "buying", "operation": "add", "confidence": 0.8,
         }))
         state = {"active_query": "shoes", "turn": 1, "session_mode": "browsing", "last_question": None}
@@ -277,10 +216,10 @@ class GeminiIntentParserTest(unittest.TestCase):
         self.assertEqual(result1.mode, result2.mode)
 
     @patch("starter.intent_parser.urllib.request.urlopen")
-    def test_empty_candidates_raises(self, mock_urlopen) -> None:
+    def test_empty_choices_raises(self, mock_urlopen) -> None:
         mock_urlopen.return_value = _mock_urlopen(json.dumps({
-            "candidates": [],
-            "usageMetadata": {"promptTokenCount": 10},
+            "choices": [],
+            "usage": {"prompt_tokens": 10},
         }).encode())
         with self.assertRaises(RuntimeError):
             self.parser.parse("hello", {"active_query": "", "turn": 1})
@@ -294,15 +233,25 @@ class GeminiIntentParserTest(unittest.TestCase):
 
     @patch("starter.intent_parser.urllib.request.urlopen")
     def test_never_leaks_api_key_in_prompt(self, mock_urlopen) -> None:
-        mock_urlopen.return_value = _mock_urlopen(_gemini_response({
+        mock_urlopen.return_value = _mock_urlopen(_openai_response({
             "mode": "browsing", "operation": "none", "confidence": 0.5,
         }))
         self.parser.parse("hello", {"active_query": "", "turn": 1})
         call_args = mock_urlopen.call_args
         request = call_args[0][0]
         body = json.loads(request.data)
-        prompt_text = body["contents"][0]["parts"][0]["text"]
-        self.assertNotIn("test-key", prompt_text)
+        for msg in body["messages"]:
+            self.assertNotIn("test-key", msg["content"])
+
+    @patch("starter.intent_parser.urllib.request.urlopen")
+    def test_uses_bearer_auth(self, mock_urlopen) -> None:
+        mock_urlopen.return_value = _mock_urlopen(_openai_response({
+            "mode": "browsing", "operation": "none", "confidence": 0.5,
+        }))
+        self.parser.parse("hello", {"active_query": "", "turn": 1})
+        call_args = mock_urlopen.call_args
+        request = call_args[0][0]
+        self.assertEqual(request.get_header("Authorization"), "Bearer test-key")
 
 
 class HybridIntentParserTest(unittest.TestCase):
@@ -310,53 +259,57 @@ class HybridIntentParserTest(unittest.TestCase):
         self.classifier = IntentClassifier()
         self.deterministic = DeterministicIntentParser(self.classifier)
 
-    def test_template_uses_deterministic(self) -> None:
-        gemini = MagicMock(spec=GeminiIntentParser)
-        parser = HybridIntentParser(self.deterministic, gemini)
-        result = parser.parse(
-            "I'm looking for shoes. A key requirement is: cotton.",
-            {"active_query": ""},
-        )
-        self.assertEqual(result.source, "deterministic")
-        gemini.parse.assert_not_called()
-
-    def test_nontemplate_uses_gemini_when_available(self) -> None:
-        gemini = MagicMock(spec=GeminiIntentParser)
-        gemini.parse.return_value = IntentResult(
+    def test_uses_llm_when_available(self) -> None:
+        llm = MagicMock(spec=OpenAIIntentParser)
+        llm.parse.return_value = IntentResult(
             mode="override", confidence=0.9, source="llm",
         )
-        parser = HybridIntentParser(self.deterministic, gemini)
+        parser = HybridIntentParser(self.deterministic, llm)
         result = parser.parse(
             "On second thought, white would suit me better.",
             {"active_query": "black shoes"},
         )
         self.assertEqual(result.source, "llm")
         self.assertEqual(result.mode, "override")
-        gemini.parse.assert_called_once()
+        llm.parse.assert_called_once()
+
+    def test_llm_handles_all_messages(self) -> None:
+        """Even simulator-template-like messages go through the LLM."""
+        llm = MagicMock(spec=OpenAIIntentParser)
+        llm.parse.return_value = IntentResult(
+            mode="buying", confidence=0.95, source="llm",
+        )
+        parser = HybridIntentParser(self.deterministic, llm)
+        result = parser.parse(
+            "I'm looking for shoes. A key requirement is: cotton.",
+            {"active_query": ""},
+        )
+        self.assertEqual(result.source, "llm")
+        llm.parse.assert_called_once()
 
     def test_low_confidence_falls_back(self) -> None:
-        gemini = MagicMock(spec=GeminiIntentParser)
-        gemini.parse.return_value = IntentResult(
+        llm = MagicMock(spec=OpenAIIntentParser)
+        llm.parse.return_value = IntentResult(
             mode="override", confidence=0.1, source="llm",
         )
-        parser = HybridIntentParser(self.deterministic, gemini)
+        parser = HybridIntentParser(self.deterministic, llm)
         result = parser.parse("maybe change color?", {"active_query": ""})
         self.assertEqual(result.source, "deterministic")
 
-    def test_gemini_exception_falls_back(self) -> None:
-        gemini = MagicMock(spec=GeminiIntentParser)
-        gemini.parse.side_effect = RuntimeError("API error")
-        parser = HybridIntentParser(self.deterministic, gemini)
+    def test_llm_exception_falls_back(self) -> None:
+        llm = MagicMock(spec=OpenAIIntentParser)
+        llm.parse.side_effect = RuntimeError("API error")
+        parser = HybridIntentParser(self.deterministic, llm)
         result = parser.parse("anything except leather", {"active_query": "shoes"})
         self.assertEqual(result.source, "deterministic")
 
-    def test_no_gemini_always_deterministic(self) -> None:
-        parser = HybridIntentParser(self.deterministic, gemini=None)
+    def test_no_llm_always_deterministic(self) -> None:
+        parser = HybridIntentParser(self.deterministic, llm=None)
         result = parser.parse("something warm for winter", {"active_query": ""})
         self.assertEqual(result.source, "deterministic")
 
     def test_missing_key_falls_back(self) -> None:
-        parser = HybridIntentParser(self.deterministic, gemini=None)
+        parser = HybridIntentParser(self.deterministic, llm=None)
         result = parser.parse(
             "On second thought, white would suit me better.",
             {"active_query": "black shoes"},
@@ -416,11 +369,11 @@ class SessionIsolationTest(unittest.TestCase):
 
     @patch("starter.intent_parser.urllib.request.urlopen")
     def test_separate_instances_have_separate_caches(self, mock_urlopen) -> None:
-        mock_urlopen.return_value = _mock_urlopen(_gemini_response({
+        mock_urlopen.return_value = _mock_urlopen(_openai_response({
             "mode": "buying", "operation": "add", "confidence": 0.8,
         }))
-        parser_a = GeminiIntentParser(api_key="key-a", timeout=2.0)
-        parser_b = GeminiIntentParser(api_key="key-b", timeout=2.0)
+        parser_a = OpenAIIntentParser(api_key="key-a", timeout=2.0)
+        parser_b = OpenAIIntentParser(api_key="key-b", timeout=2.0)
 
         parser_a.parse("shoes", {"active_query": "", "turn": 1})
         self.assertEqual(len(parser_a._cache), 1)
@@ -428,7 +381,7 @@ class SessionIsolationTest(unittest.TestCase):
 
 
 class LoadApiKeyTest(unittest.TestCase):
-    @patch.dict("os.environ", {"GEMINI_API_KEY": "env-key-123"}, clear=False)
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "env-key-123"}, clear=False)
     def test_reads_from_environment(self) -> None:
         self.assertEqual(load_api_key(), "env-key-123")
 

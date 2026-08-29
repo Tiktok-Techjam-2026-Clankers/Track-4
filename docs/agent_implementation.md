@@ -53,19 +53,16 @@ scored Top 10.
 
 ### 3.1 Intent classification
 
-Intent classification uses a hybrid pipeline (`HybridIntentParser`):
+Intent classification is LLM-first via `HybridIntentParser`:
 
-1. **Template detection** — verbatim simulator messages are routed to the
-   deterministic `IntentClassifier` regex parser (fast path, preserves
-   baseline scores).
-2. **Gemini 3.5 Flash-Lite** — all other messages are sent to the LLM for
+1. **OpenAI gpt-4.1-mini** — all messages are sent to the LLM for
    structured JSON intent extraction (mode, constraints, negations,
    no-preference signals, confidence score).
-3. **Deterministic fallback** — if the API key is missing, the call times
-   out, or the LLM confidence is below 0.5, the regex parser handles the
-   message instead.
+2. **Deterministic fallback** — if the API key is missing, the call times
+   out, or the LLM confidence is below 0.5, a minimal fallback returns
+   “browsing”.
 
-The parser routes into one of three modes:
+The LLM routes into one of three modes:
 
 - **Browsing:** the shopper is still exploring or has given few constraints.
 - **Buying:** the shopper has supplied a price or multiple concrete
@@ -75,7 +72,7 @@ The parser routes into one of three modes:
 
 Beyond mode detection, the LLM also extracts negative constraints (explicit
 exclusions like “no leather”), no-preference signals, and add/remove
-constraint operations that the regex parser cannot capture.
+constraint operations.
 
 The detected mode changes retrieval and ranking weights. The original session
 mode is also retained so a later vague response does not erase the difference
@@ -257,7 +254,7 @@ machine-readable results are stored in `docs/independent_agent_results.json`.
 
 ## 8. Runtime Characteristics
 
-- Optional Gemini 3.5 Flash-Lite calls for intent parsing (key read from `.env` automatically).
+- LLM-first intent parsing via OpenAI gpt-4.1-mini (key read from `.env` automatically).
 - Falls back to fully deterministic parsing when no key is set — no network access needed.
 - No hosted service or external vector database.
 - All indexes are in memory; BM25 uses an in-memory SQLite database.

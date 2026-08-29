@@ -22,7 +22,7 @@ import numpy as np
 
 from starter.intent_parser import (
     DeterministicIntentParser,
-    GeminiIntentParser,
+    OpenAIIntentParser,
     HybridIntentParser,
     IntentResult,
     LLM_CONFIDENCE_THRESHOLD,
@@ -32,31 +32,6 @@ from starter.intent_parser import (
 
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 CONSTRAINT_TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
-OVERRIDE_RE = re.compile(
-    r"\b(?:actually|instead|ignore\s+(?:that|my|the)|no\s+longer|"
-    r"changed?\s+my\s+mind|change\s+of\s+plan|make\s+(?:it|them)|"
-    r"scrap\s+(?:that|what|the)|forget\s+(?:that|what|the|my)|"
-    r"correct\s+myself|let\s+me\s+correct)\b",
-    re.IGNORECASE,
-)
-NO_PREFERENCE_RE = re.compile(
-    r"\b(?:no|without)\s+(?:additional\s+)?preference\b|"
-    r"\bdon['’]?t\s+have\s+(?:an?\s+)?(?:additional\s+)?preference\b|"
-    r"\buse\s+your\s+(?:best\s+)?judg(?:e)?ment\b|"
-    r"\bno\s+strong\s+feelings?\b|\bdoesn['’]?t\s+(?:really\s+)?matter\b|"
-    r"\bnothing\s+to\s+add\b|\bup\s+to\s+you\b|"
-    r"\bdon['’]?t\s+mind\b|\byou\s+pick\b|\bwhatever\b",
-    re.IGNORECASE,
-)
-BROWSING_RE = re.compile(
-    r"\b(?:still\s+exploring|just\s+browsing|still\s+deciding|not\s+sure|"
-    r"nothing\s+fixed|haven['’]?t\s+narrowed)\b",
-    re.IGNORECASE,
-)
-PRICE_RE = re.compile(
-    r"(?:\$\s*\d+(?:\.\d+)?|\b(?:under|below|less\s+than|budget)\b)",
-    re.IGNORECASE,
-)
 CATEGORY_CONTEXT_RE = re.compile(
     r"^\s*i['’]?m\s+looking\s+for\s+([^.,;]+)", re.IGNORECASE
 )
@@ -125,13 +100,6 @@ PHRASE_ALIASES = (
     (re.compile(r"\bwith\s+a\s+lining\b", re.I), "lined"),
     (re.compile(r"\beasy\s+to\s+adjust\b", re.I), "adjustable"),
 )
-
-HARD_CONSTRAINT_WORDS = {
-    "black", "white", "gray", "blue", "red", "green", "brown", "pink",
-    "cotton", "polyester", "nylon", "leather", "wool", "silk", "linen",
-    "small", "medium", "large", "petite", "tall", "wide", "waterresistant",
-    "breathable", "insulated", "running", "hiking", "athletic",
-}
 
 QUESTION_SEQUENCE = (
     "material", "color", "style", "use_case", "feature",
@@ -226,18 +194,10 @@ def _category_key(value: object) -> str:
 
 
 class IntentClassifier:
-    """Classify the current request as browsing, buying, or override."""
+    """Minimal fallback classifier used only when the LLM is unavailable."""
 
     @staticmethod
     def classify(message: str, active_query: str = "") -> str:
-        if OVERRIDE_RE.search(message):
-            return "override"
-        if BROWSING_RE.search(message):
-            return "browsing"
-        terms = _tokens(f"{active_query} {message}")
-        hard_count = sum(term in HARD_CONSTRAINT_WORDS for term in set(terms))
-        if PRICE_RE.search(message) or hard_count >= 2 or len(set(terms)) >= 6:
-            return "buying"
         return "browsing"
 
 
@@ -274,7 +234,7 @@ class ConversationMemory:
         if len(self.history) == 1:
             self.session_mode = "buying" if intent == "buying" else "browsing"
 
-        is_no_pref = no_pref_override or NO_PREFERENCE_RE.search(message)
+        is_no_pref = no_pref_override
         if is_no_pref and self.last_question:
             self.declined_attributes.add(self.last_question)
             if len(self.history) == 2:
@@ -500,9 +460,14 @@ class IntentCardIndex:
         tolerates reordered clauses and ordinary synonyms without depending
         on evaluator templates or hidden labels.
         """
+        _NO_PREF_PHRASES = (
+            "no preference", "don't have a preference", "use your judg",
+            "doesn't matter", "doesn't really matter", "nothing to add",
+            "up to you", "don't mind", "you pick", "whatever",
+        )
         useful_messages = [
             message for message in messages
-            if not NO_PREFERENCE_RE.search(message)
+            if not any(p in message.lower() for p in _NO_PREF_PHRASES)
         ]
         query_sequence = [
             token for token in _tokens(" ".join(useful_messages))
@@ -889,8 +854,8 @@ class Agent:
         self._llm_usage: dict[str, tuple[int, int]] = {}
         deterministic = DeterministicIntentParser(self.intent_classifier)
         api_key = load_api_key()
-        gemini = GeminiIntentParser(api_key) if api_key else None
-        self.intent_parser = HybridIntentParser(deterministic, gemini)
+        llm = OpenAIIntentParser(api_key) if api_key else None
+        self.intent_parser = HybridIntentParser(deterministic, llm)
         identifiers, semantic_documents, intent_cards, category_keys = self._build_catalog_indexes()
         self.bm25 = BM25Index(self.connection)
         self.constraints = ConstraintIndex(identifiers, semantic_documents)

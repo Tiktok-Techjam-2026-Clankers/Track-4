@@ -2,15 +2,12 @@
 
 ## Overview
 
-The shopping copilot uses a hybrid intent-classification pipeline:
+The shopping copilot uses an LLM-first intent-classification pipeline:
 
 ```
 User message + compact conversation state
         ↓
-Template detection (is it a verbatim simulator message?)
-        ↓  yes → DeterministicIntentParser (regex)
-        ↓  no  ↓
-GeminiIntentParser (Gemini 3.5 Flash-Lite, structured JSON)
+OpenAIIntentParser (gpt-4.1-mini, structured JSON)
         ↓  fail → DeterministicIntentParser (fallback)
         ↓
 Schema validation
@@ -24,6 +21,10 @@ Existing deterministic ranking (with negative constraint penalty)
 Top-10 response
 ```
 
+All messages go through the LLM — there is no template detection bypass.
+The deterministic fallback only activates when the LLM is unavailable or
+returns low confidence.
+
 ## Components
 
 ### `starter/intent_parser.py`
@@ -32,9 +33,9 @@ Top-10 response
 |---|---|
 | `IntentResult` | Structured output dataclass — mode, constraints, negations, confidence |
 | `IntentParser` | Abstract interface |
-| `DeterministicIntentParser` | Wraps existing `IntentClassifier` regex logic |
-| `GeminiIntentParser` | Calls Gemini API, validates response, caches results |
-| `HybridIntentParser` | Template detection → Gemini → deterministic fallback |
+| `DeterministicIntentParser` | Minimal fallback — always returns "browsing" |
+| `OpenAIIntentParser` | Calls OpenAI API, validates response, caches results |
+| `HybridIntentParser` | LLM-first → deterministic fallback |
 
 ### Schema
 
@@ -59,14 +60,14 @@ Top-10 response
 Place your key in `.env` at the project root:
 
 ```
-GEMINI_API_KEY=your-key-here
+OPENAI_API_KEY=your-key-here
 ```
 
 The agent reads `.env` automatically — no manual `export` needed.
 You can also set the variable in your shell if you prefer:
 
 ```bash
-export GEMINI_API_KEY="your-key-here"
+export OPENAI_API_KEY="your-key-here"
 python scripts/evaluate_datasets.py
 ```
 
@@ -77,15 +78,14 @@ deterministic parsing with zero network calls and zero token usage.
 
 | Failure | Result |
 |---|---|
-| `GEMINI_API_KEY` not set | DeterministicIntentParser only — identical to pre-LLM behaviour |
+| `OPENAI_API_KEY` not set | DeterministicIntentParser only |
 | API call times out (5 s default) | Falls back to deterministic for that turn |
-| Gemini returns malformed JSON | Falls back to deterministic for that turn |
-| Gemini returns invalid schema | Falls back to deterministic for that turn |
+| OpenAI returns malformed JSON | Falls back to deterministic for that turn |
+| OpenAI returns invalid schema | Falls back to deterministic for that turn |
 | Network error / HTTP error | Falls back to deterministic for that turn |
 | LLM confidence below 0.5 | Ignored; deterministic result used |
-| Verbatim simulator template | LLM skipped entirely; deterministic fast path |
 
-Every failure path preserves the deterministic scores exactly.
+Every failure path preserves the deterministic fallback.
 
 ## Token Accounting
 
@@ -101,7 +101,7 @@ Each response includes cumulative session token usage:
 ```
 
 - When the LLM is disabled (no key), both fields are 0.
-- Token counts come from Gemini's `usageMetadata` response field.
+- Token counts come from OpenAI's `usage` response field.
 - Counts accumulate per session across all turns.
 - The evaluator sums these across sessions for the final report.
 
@@ -109,7 +109,7 @@ Each response includes cumulative session token usage:
 
 - The API key is read from `os.environ` or `.env` — never logged, printed,
   or included in prompts.
-- The Gemini prompt receives only the current message plus a compact
+- The OpenAI prompt receives only the current message plus a compact
   summary of the conversation state (active query, turn number, session
   mode, last question). It never receives the full transcript, product
   catalogue, or product IDs.
@@ -118,7 +118,7 @@ Each response includes cumulative session token usage:
 
 ## Deterministic Scores (no LLM)
 
-Verified on `di-heng-3` with `GEMINI_API_KEY` unset:
+Verified on `di-heng-3` with `OPENAI_API_KEY` unset:
 
 | Dataset | Score |
 |---|---|
