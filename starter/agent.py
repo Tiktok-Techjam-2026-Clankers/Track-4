@@ -20,6 +20,15 @@ from pathlib import Path
 
 import numpy as np
 
+from starter.intent_parser import (
+    DeterministicIntentParser,
+    GeminiIntentParser,
+    HybridIntentParser,
+    IntentResult,
+    LLM_CONFIDENCE_THRESHOLD,
+    load_api_key,
+)
+
 
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 CONSTRAINT_TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
@@ -250,24 +259,29 @@ class ConversationMemory:
     recommendation_ladder: list[str] = field(default_factory=list)
     ladder_position: int = 0
     fuzzy_recommended: set[str] = field(default_factory=set)
+    negative_constraints: set[str] = field(default_factory=set)
 
-    def observe(self, message: str, classifier: IntentClassifier) -> str:
+    def observe(
+        self,
+        message: str,
+        classifier: IntentClassifier,
+        mode_override: str | None = None,
+        no_pref_override: bool = False,
+    ) -> str:
         self.history.append(message)
         query_before = self.query()
-        intent = classifier.classify(message, query_before)
+        intent = mode_override if mode_override else classifier.classify(message, query_before)
         if len(self.history) == 1:
             self.session_mode = "buying" if intent == "buying" else "browsing"
 
-        if NO_PREFERENCE_RE.search(message) and self.last_question:
+        is_no_pref = no_pref_override or NO_PREFERENCE_RE.search(message)
+        if is_no_pref and self.last_question:
             self.declined_attributes.add(self.last_question)
             if len(self.history) == 2:
                 self.boundary_signal = True
 
         if intent == "override":
             self.previous_intents.append(query_before)
-            # Preserve only the stable "I'm looking for <category>" clause
-            # from the opener. Intermediate preferences are retired and the
-            # replacement utterance becomes the new active requirement.
             opener = ""
             if self.active_messages:
                 match = CATEGORY_CONTEXT_RE.search(self.active_messages[0])
@@ -279,7 +293,7 @@ class ConversationMemory:
             self.recommendation_ladder.clear()
             self.ladder_position = 0
             self.fuzzy_recommended.clear()
-        elif not NO_PREFERENCE_RE.search(message):
+        elif not is_no_pref:
             self.active_messages.append(message)
 
         self.intent = intent
@@ -872,6 +886,11 @@ class Agent:
         self.connection = sqlite3.connect(":memory:")
         self.intent_classifier = IntentClassifier()
         self.sessions: dict[str, ConversationMemory] = {}
+        self._llm_usage: dict[str, tuple[int, int]] = {}
+        deterministic = DeterministicIntentParser(self.intent_classifier)
+        api_key = load_api_key()
+        gemini = GeminiIntentParser(api_key) if api_key else None
+        self.intent_parser = HybridIntentParser(deterministic, gemini)
         identifiers, semantic_documents, intent_cards, category_keys = self._build_catalog_indexes()
         self.bm25 = BM25Index(self.connection)
         self.constraints = ConstraintIndex(identifiers, semantic_documents)
@@ -879,6 +898,27 @@ class Agent:
         self.categories = CategoryIndex(identifiers, category_keys, self.popularity)
         self.semantic = InMemoryVectorIndex(identifiers, semantic_documents)
         self.phrase = PhraseReranker(self.product_text)
+
+    def _penalize_negative(
+        self,
+        ranked: list[tuple[str, float]],
+        negative_constraints: set[str],
+    ) -> list[tuple[str, float]]:
+        """Move products matching negative constraints to the end."""
+        negative_tokens = set()
+        for nc in negative_constraints:
+            negative_tokens.update(_tokens(nc))
+        if not negative_tokens:
+            return ranked
+        clean: list[tuple[str, float]] = []
+        dirty: list[tuple[str, float]] = []
+        for identifier, score in ranked:
+            text = self.product_text.get(identifier, "")
+            if any(token in text for token in negative_tokens):
+                dirty.append((identifier, score))
+            else:
+                clean.append((identifier, score))
+        return clean + dirty if clean else ranked
 
     def _build_catalog_indexes(
         self,
@@ -942,7 +982,38 @@ class Agent:
         if session_id not in self.sessions:
             self.reset(session_id, {})
         memory = self.sessions[session_id]
-        intent = memory.observe(user_message, self.intent_classifier)
+
+        compact_state = {
+            "active_query": memory.query(),
+            "turn": turn,
+            "session_mode": memory.session_mode,
+            "last_question": memory.last_question,
+        }
+        intent_result = self.intent_parser.parse(user_message, compact_state)
+
+        mode_override = None
+        no_pref_override = False
+        if intent_result.source == "llm" and intent_result.confidence >= LLM_CONFIDENCE_THRESHOLD:
+            mode_override = intent_result.mode
+            no_pref_override = bool(intent_result.no_preference) and not intent_result.add_constraints
+
+        intent = memory.observe(
+            user_message, self.intent_classifier,
+            mode_override=mode_override,
+            no_pref_override=no_pref_override,
+        )
+
+        if intent_result.source == "llm":
+            for attr in intent_result.no_preference:
+                memory.declined_attributes.add(attr)
+            for nc in intent_result.negative_constraints:
+                memory.negative_constraints.add(nc.lower())
+
+        self._llm_usage[session_id] = (
+            self._llm_usage.get(session_id, (0, 0))[0] + intent_result.prompt_tokens,
+            self._llm_usage.get(session_id, (0, 0))[1] + intent_result.completion_tokens,
+        )
+
         if intent == "override":
             memory.last_override_turn = turn
         phase_turn = (
@@ -1305,9 +1376,16 @@ class Agent:
                 if len(ranked) == response_limit:
                     break
 
+        if memory.negative_constraints and ranked:
+            ranked = self._penalize_negative(ranked, memory.negative_constraints)
+
         ask_attribute = memory.choose_question()
         if fuzzy_single_mode and ranked:
             memory.fuzzy_recommended.update(identifier for identifier, _ in ranked)
         if ladder_mode:
             memory.ladder_position += response_limit
-        return ResponseBuilder.build(ranked[:response_limit], ask_attribute, intent)
+        response = ResponseBuilder.build(ranked[:response_limit], ask_attribute, intent)
+        usage = self._llm_usage.get(session_id, (0, 0))
+        response["usage"]["prompt_tokens"] = usage[0]
+        response["usage"]["completion_tokens"] = usage[1]
+        return response
