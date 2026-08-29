@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from starter.agent import (
     Agent,
@@ -216,7 +217,8 @@ class AgentContractTest(unittest.TestCase):
                 "".join(json.dumps(product) + "\n" for product in products),
                 encoding="utf-8",
             )
-            agent = Agent(catalog)
+            with patch("starter.agent.load_api_key", return_value=None):
+                agent = Agent(catalog)
             agent.reset("session", {})
             response = agent.respond("session", "comfy blue trainers", 1, 2)
 

@@ -56,22 +56,19 @@ Top-10 response
 
 ## Environment Variable
 
-Set `GEMINI_API_KEY` in your shell environment:
+Place your key in `.env` at the project root:
+
+```
+GEMINI_API_KEY=your-key-here
+```
+
+The agent reads `.env` automatically — no manual `export` needed.
+You can also set the variable in your shell if you prefer:
 
 ```bash
 export GEMINI_API_KEY="your-key-here"
 python scripts/score_datasets.py
 ```
-
-Or load from `.env`:
-
-```bash
-export $(grep GEMINI_API_KEY .env | xargs)
-python scripts/score_datasets.py
-```
-
-Or call `load_dotenv_api_key()` once in your entry-point script before
-creating the Agent.
 
 When the variable is unset or empty, the agent falls back to pure
 deterministic parsing with zero network calls and zero token usage.
@@ -110,8 +107,8 @@ Each response includes cumulative session token usage:
 
 ## Privacy
 
-- The API key is read from `os.environ` only — never logged, printed, or
-  included in prompts.
+- The API key is read from `os.environ` or `.env` — never logged, printed,
+  or included in prompts.
 - The Gemini prompt receives only the current message plus a compact
   summary of the conversation state (active query, turn number, session
   mode, last question). It never receives the full transcript, product

@@ -122,30 +122,15 @@ def is_simulator_template(message: str) -> bool:
 
 
 def load_api_key() -> str | None:
-    """Load GEMINI_API_KEY from environment. Never logs the key.
+    """Load GEMINI_API_KEY from environment or ``.env`` file. Never logs the key.
 
-    Reads ``os.environ`` only.  To use the key stored in ``.env``,
-    export it into the shell before launching the agent::
-
-        export $(grep GEMINI_API_KEY .env | xargs)
-        python scripts/score_datasets.py
-
-    Or call ``load_dotenv_api_key()`` once in your entry-point script.
+    Checks ``os.environ`` first, then falls back to reading from a ``.env``
+    file next to the project root.  When found in ``.env`` the value is
+    injected into ``os.environ`` so downstream code sees it too.
     """
     key = os.environ.get("GEMINI_API_KEY")
-    if key:
-        return key.strip() or None
-    return None
-
-
-def load_dotenv_api_key() -> str | None:
-    """Read GEMINI_API_KEY from a ``.env`` file and inject into os.environ.
-
-    Returns the key (or None).  Safe to call multiple times.
-    """
-    key = load_api_key()
-    if key:
-        return key
+    if key and key.strip():
+        return key.strip()
     env_path = Path(__file__).resolve().parents[1] / ".env"
     if env_path.is_file():
         try:
