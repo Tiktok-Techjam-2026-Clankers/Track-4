@@ -15,7 +15,7 @@ for two things — natural-language **intent parsing** and **semantic
 reranking** — and falls back to a fully deterministic pipeline (no network,
 byte-identical results) when no API key is present.
 
-> New to the codebase? Read §2 (what score we optimise) and §11 (the
+> New to the codebase? Read §2 (what score we optimise) and §14 (the
 > glossary) first — every jargon term used in the code is defined there.
 
 ## 2. What the agent is scored on
@@ -41,33 +41,36 @@ Every design choice in this document is a trade-off between these three levers:
 **find it at all** (HitRate), **rank it high** (MRR), and **find it early**
 (Efficiency/MTTC). They pull against each other — showing one confident pick
 maximises MRR but risks missing; showing ten diverse items maximises HitRate but
-dilutes MRR. The turn-aware policy (§7) manages that tension.
+dilutes MRR. The turn-aware policy (§10.2) manages that tension.
 
 ## 3. System flow
 
-Every shopper reply runs the same loop:
+Every shopper reply runs the same loop. **Each numbered node is documented in
+the section of the same number** (§4–§11), so the diagram and the text share one
+numbering:
 
 ```mermaid
 flowchart TD
-    A[Shopper message] --> B[1. Intent parse — LLM or deterministic]
-    B --> C[2. Update conversation memory]
-    C --> D[3. Build accumulated query + soft profile signals]
+    A[Shopper message] --> B[4 · Intent parse — LLM or deterministic]
+    B --> C[5 · Update conversation memory]
+    C --> D[6 · Build accumulated query + soft profile signals]
 
-    D --> E1[BM25 route — SQLite FTS5]
-    D --> E2[Semantic route — hashed vectors]
-    D --> E3[Constraint route — TF-IDF]
-    D --> E4[Intent-card routes — exact / prefix / fuzzy / override]
-    D --> E5[Category route — coarse category]
+    D --> E[7 · Retrieval routes]
+    E --> E1[BM25 — SQLite FTS5]
+    E --> E2[Semantic — hashed vectors]
+    E --> E3[Constraint — TF-IDF]
+    E --> E4[Intent-card — exact / prefix / fuzzy / override]
+    E --> E5[Category — coarse category]
 
-    E1 --> F[4. RRF fusion with dynamic weights]
+    E1 --> F[8 · RRF fusion with dynamic weights]
     E2 --> F
     E3 --> F
     E4 --> F
     E5 --> F
 
-    F --> G[4b. LLM semantic rerank — plain path only]
-    G --> H[5. Post-fusion policy cascade]
-    H --> I[6. Build response + choose clarifying question]
+    F --> G[9 · LLM semantic rerank — plain path only]
+    G --> H[10 · Post-fusion policy cascade]
+    H --> I[11 · Build response + choose clarifying question]
 
     I --> J{Target in Top-10?}
     J -->|No and turn < 10| A
@@ -77,9 +80,7 @@ flowchart TD
 The agent returns recommendations **and** a clarifying question in the same
 response, so it can keep narrowing while already exposing candidates.
 
-## 4. Stage 1–2: Intent and memory
-
-### 4.1 Intent parsing
+## 4. Intent parsing
 
 Intent parsing is **LLM-first** via `HybridIntentParser`:
 
@@ -102,10 +103,10 @@ supplied at `reset()`), so the model interprets ambiguous replies in light of
 who the shopper is. Full LLM architecture and failure modes:
 `docs/llm_intent_architecture.md`.
 
-### 4.2 Conversation memory
+## 5. Conversation memory
 
 `ConversationMemory` is kept per `session_id` and is the agent's entire state.
-Key fields (all defined in §11):
+Key fields (all defined in §14):
 
 - `history` / `active_messages` — everything said vs. the messages currently
   driving retrieval;
@@ -125,21 +126,38 @@ replies are remembered as `declined_attributes` but kept out of the search
 query, so "no preference for colour" never becomes a positive "colour"
 requirement.
 
-## 5. Stage 3–4: Retrieval and fusion
+## 6. Build the accumulated query + soft profile signals
 
-### 5.1 The retrieval routes
+Retrieval runs against an **accumulated query** built by `memory.query()` from
+the messages currently driving the session — not the raw transcript. Two
+enrichments are applied here:
 
-The accumulated query (built from `memory.query()`, optionally enriched on
-turn 1 with up to three profile **preference tags** as soft terms) is sent to
-several independent indexes. Each returns a ranked list of `parent_asin`s over
-**visible catalog fields only**:
+- **Turn-1 soft profile signals.** On the first turn only, if the shopper
+  profile carries preference tags, up to three tags not already present are
+  appended to the query as low-commitment **soft terms**. This enriches early
+  retrieval before the shopper has stated much; later turns rely on the
+  accumulated conversation instead, so tags never override explicit
+  requirements.
+- **LLM-derived structured constraints.** In LLM mode the parser's
+  `add_constraints` (attribute → value, e.g. `material → leather`) are routed
+  into the intent-card matcher (§7) via the same catalog-clause lookup used for
+  text markers. This means card retrieval no longer depends on the simulator's
+  exact disclosure phrasing. In deterministic mode `add_constraints` is empty,
+  so this is a no-op and the scored path is byte-identical.
+
+## 7. Retrieval routes
+
+### 7.1 The routes
+
+The accumulated query (§6) is sent to several independent indexes. Each returns
+a ranked list of `parent_asin`s over **visible catalog fields only**:
 
 | Route | Class | Method | What it is good at |
 |---|---|---|---|
 | **BM25** | `BM25Index` | SQLite FTS5 full-text | Exact keywords, titles, brands, attribute words |
 | **Semantic** | `InMemoryVectorIndex` | 256-d hashed vectors, cosine | Synonyms and meaning-level similarity |
 | **Constraint** | `ConstraintIndex` | sparse TF-IDF postings | Several explicit hard requirements at once |
-| **Intent-card: exact** | `IntentCardIndex.search` | exact clause postings | Requirements the simulator disclosed verbatim |
+| **Intent-card: exact** | `IntentCardIndex.search` | exact clause postings | Requirements the shopper disclosed verbatim |
 | **Intent-card: prefix** | `.prefix_search` | consecutive-clause prefix | Ordered disclosure — a longer matched prefix is stronger evidence |
 | **Intent-card: fuzzy** | `.fuzzy_search` | token/bigram overlap × rarity | Paraphrased or reordered disclosures |
 | **Intent-card: override** | `.override_search` | old-intent + new-clause reconcile | Recovering the target after an override |
@@ -147,14 +165,19 @@ several independent indexes. Each returns a ranked list of `parent_asin`s over
 
 **Intent cards** are per-product bundles of structured clauses (material,
 colour, price, features) derived *only* from visible catalog fields — they
-reproduce the *kind* of requirement the simulator discloses, without touching
-hidden labels. The semantic encoder canonicalises equivalents before hashing
-(`sneakers → shoe`, `comfy → comfortable`, `rainproof → waterresistant`).
-Product vectors are built once at startup; only the live query is encoded per
-turn. Constraint normalisation is Unicode-safe, so non-English catalog clauses
-stay searchable.
+reproduce the *kind* of requirement a shopper discloses, without touching hidden
+labels. A clause counts as **revealed** when it surfaces in the conversation
+either through a constraint-introducing marker (a set covering the simulator's
+own phrasings *plus* common natural variants such as "it must be…", "I need
+it to be…", "I want…", colon optional) or, in LLM mode, through the parser's
+structured `add_constraints` (§6). Matching therefore no longer hinges on the
+evaluator's exact wording. The semantic encoder canonicalises equivalents before
+hashing (`sneakers → shoe`, `comfy → comfortable`, `rainproof →
+waterresistant`). Product vectors are built once at startup; only the live query
+is encoded per turn. Constraint normalisation is Unicode-safe, so non-English
+catalog clauses stay searchable.
 
-### 5.2 The evidence route
+### 7.2 The evidence route
 
 The intent-card and constraint signals are folded into one composite ranking —
 the **evidence route** — via a weighted RRF sum (weights in code at
@@ -173,7 +196,7 @@ contributes. Prefix and fuzzy evidence carry the heaviest weights (8.0, 7.0)
 because ordered/paraphrase-matched clauses are the strongest signal that a
 product matches what the shopper actually described.
 
-### 5.3 RRF fusion with dynamic weights
+## 8. RRF fusion with dynamic weights
 
 `HybridRanker.fuse()` merges four inputs — **BM25, semantic, evidence,
 popularity** — using **Reciprocal Rank Fusion**:
@@ -200,7 +223,7 @@ ranking. Base weights/​k live in `WEIGHTS` and `FUSION_K`, keyed by the
 off, the static base values are used unchanged, so the deterministic path is
 identical to before.
 
-### 5.4 LLM semantic reranking
+## 9. LLM semantic reranking
 
 When a key is present, `LLMReranker` reranks the fused list with a second
 `gpt-4.1-mini` call. It receives **numbered product titles only** (no ASINs)
@@ -216,16 +239,17 @@ cost):
    candidate from rank 11–30 rather than only reshuffle the Top-10.
 
 Responses are SHA-256 cached. Measured effect of the two guards: score
-0.9342 → **0.9384** and ~170k fewer tokens per 200-session run (see §9).
+0.9342 → **0.9384** and ~170k fewer tokens per 200-session run (see §12).
 
-## 6. Stage 5: The post-fusion policy cascade
+## 10. Post-fusion policy cascade
 
 This is the heart of the agent and the part most easily misread from the code.
 After fusion produces `ranked`, a sequence of conditional rewrites runs. Each
-step only fires under its own guard; later steps override earlier ones. In
-execution order:
+step only fires under its own guard; later steps override earlier ones.
 
-1. **LLM rerank** (§5.4) — plain path only, gated.
+### 10.1 The cascade steps (execution order)
+
+1. **LLM rerank** (§9) — plain path only, gated.
 2. **Prefix head** — if `prefix_search` returned anything, its top items are
    pinned to the front of `ranked` (they are the strongest ordered-disclosure
    matches), and the rest of `ranked` fills in behind.
@@ -247,7 +271,7 @@ execution order:
 8. **Fuzzy single-mode** — when the fuzzy route is active, turns 1–9 each expose
    **one** new fuzzy candidate (walking down the list, tracked in
    `fuzzy_recommended`); **turn 10** switches to the coverage-maximising
-   final-turn fill (§7.2).
+   final-turn fill (§10.3).
 9. **Deferral / early limit** — before `MIN_RECOMMEND_TURN` show nothing; before
    `FULL_RECOMMENDATION_TURN` show only `EARLY_RECOMMENDATION_LIMIT` (= 1) item.
 10. **Recommendation ladder** — on the stable path from `FULL_RECOMMENDATION_TURN`
@@ -266,9 +290,7 @@ MRR), then broaden coverage turn by turn without reshuffling what the shopper
 already saw (good HitRate and MTTC), with dedicated recovery paths for overrides
 and paraphrases.
 
-## 7. Turn-aware recommendation policy
-
-### 7.1 Early vs. late turns
+### 10.2 Turn-aware behaviour: early vs. late turns
 
 - **Early turns** (before `FULL_RECOMMENDATION_TURN`): one high-confidence
   candidate only — maximise MRR, avoid diluting the list before enough is known.
@@ -278,7 +300,7 @@ and paraphrases.
   returned together, so the agent narrows and exposes candidates on the same
   turn (protects MTTC).
 
-### 7.2 The final-turn (turn 10) fill
+### 10.3 The final-turn (turn 10) fill
 
 Turn 10 is special: there is no later turn to protect, so the goal flips from
 precision to **coverage** of still-unseen candidates. The fill simply
@@ -298,11 +320,11 @@ leakage-shaped constants — it was kept (comment at `agent.py:1392`).
 > Note on stale figures: an earlier version of this doc reported a 0.9726
 > deterministic baseline. That number predates the Gemini→OpenAI switch and was
 > never re-measured; the true current-code deterministic default is **0.966400**
-> (see §9).
+> (see §12).
 
-## 8. Stage 6: Response, clarification, validation
+## 11. Response, clarification & validation
 
-### 8.1 Clarification strategy
+### 11.1 Clarification strategy
 
 `choose_question()` follows an **adaptive priority chain**:
 
@@ -316,7 +338,7 @@ leakage-shaped constants — it was kept (comment at `agent.py:1392`).
 Declined attributes are skipped at every level. A boundary reply ("use your
 judgment") is stored as state, not added to the query.
 
-### 8.2 Response contract
+### 11.2 Response contract
 
 `ResponseBuilder.build()` returns exactly the evaluator contract:
 
@@ -332,7 +354,7 @@ judgment") is stored as state, not added to the query.
 Guarantees: a natural-language message; one valid `ask_attribute`; ≤ 10 unique
 `parent_asin`s; and cumulative session token usage (0 when no LLM key is set).
 
-## 9. Verified results
+## 12. Verified results
 
 Two modes. **Non-LLM (deterministic)** uses no network and is the reproducible
 baseline. **LLM-enabled** adds `gpt-4.1-mini` intent parsing + semantic
@@ -342,7 +364,7 @@ All figures below are re-measured on the **current OpenAI codebase**. (Earlier
 docs quoted a 0.9726/0.9682 deterministic baseline; those predate the
 Gemini→OpenAI switch and were never re-measured — they are superseded here.)
 
-### Non-LLM (deterministic) — verified
+### 12.1 Non-LLM (deterministic) — verified
 
 Measured with **no API key present** (`OPENAI_API_KEY` unset), so every turn
 runs the deterministic pipeline and issues zero network calls. Byte-identical
@@ -359,7 +381,7 @@ DISABLE_LLM=1 python scripts/evaluate_datasets.py # env-var opt-out
 | Default public | 200 | 1.000 | 0.993333 | 2.580 | 0.8420 | **0.966400** |
 | Extended holdout | 500 | 0.998 | 0.983490 | 2.706 | 0.8294 | **0.959927** |
 
-### LLM-enabled (OpenAI `gpt-4.1-mini`, intent parsing + semantic reranking)
+### 12.2 LLM-enabled (OpenAI `gpt-4.1-mini`, intent parsing + semantic reranking)
 
 Two calls per turn, with the reranker gating + wide-window guards enabled.
 Tokens = prompt + completion summed over all sessions; wall-clock is the full
@@ -386,7 +408,7 @@ and lifted the default-public score from 0.934214.
 > (7 times). Because that rebuild reloads the catalog each time, its wall-clock
 > is inflated. Only the deterministic path is byte-stable across runs.
 
-### LLM-enabled (OpenAI `gpt-4.1-nano`, intent parsing + semantic reranking)
+### 12.3 LLM-enabled (OpenAI `gpt-4.1-nano`, intent parsing + semantic reranking)
 
 Full-coverage measurement of the smaller/cheaper model. Diagnosis first: a
 direct probe returned valid JSON on 10/10 calls (avg ~1.6 s, tail ~2.3 s), so
@@ -429,7 +451,7 @@ Efficiency     = clip((11 − MTTC) / 10, 0, 1)
 TechnicalScore = 0.50 × HitRate@10 + 0.30 × MRR + 0.20 × Efficiency
 ```
 
-### 9.1 Fallback behaviour — what happens when the network is cut
+### 12.4 Fallback behaviour — what happens when the network is cut
 
 The organizer's Model Policy allows the final scoring run to have **network
 access disabled**. The agent is built so that this degrades to the
@@ -456,7 +478,7 @@ Key points:
   under a disabled network, the verified deterministic numbers above are the
   ones most likely to reflect the official offline run.
 
-## 10. Setup and execution
+## 13. Setup and execution
 
 Python 3.10+.
 
@@ -504,7 +526,7 @@ Programmatically, construct the agent with `Agent(catalog_path, use_llm=False)`.
 All three routes set the internal key to `None`, so the LLM parser and reranker
 are never created — behaviour is identical to having no key at all.
 
-## 11. Glossary of terms
+## 14. Glossary of terms
 
 Every non-obvious term used in `starter/agent.py` and the docs:
 
@@ -521,9 +543,9 @@ Every non-obvious term used in `starter/agent.py` and the docs:
 | **RRF (Reciprocal Rank Fusion)** | Combining ranked lists by summing `weight / (fusion_k + rank)` across routes. Rank-based, so incomparable route scores never need normalising. |
 | **fusion_k** | The RRF denominator constant. Lower k = sharper (top ranks dominate more). Adapts down as constraint count rises. |
 | **route / retrieval route** | One index's ranked output: BM25, semantic, constraint, the four intent-card variants, category, popularity. |
-| **evidence route** | The composite structured ranking (§5.2) folding constraint + phrase + prior + card + prefix + fuzzy signals into one list, then fed into fusion. |
+| **evidence route** | The composite structured ranking (§7.2) folding constraint + phrase + prior + card + prefix + fuzzy signals into one list, then fed into fusion. |
 | **intent card** | A per-product bundle of structured clauses (material, colour, price, features) built from visible catalog fields only — the machine-readable form of a requirement. |
-| **revealed constraints** | Card clauses the simulator has actually disclosed this session (parsed from "…what matters is: …" markers). |
+| **revealed constraints** | Card clauses actually disclosed this session — recognised from constraint-introducing markers (simulator phrasings plus natural variants, colon optional) or, in LLM mode, the parser's structured `add_constraints`. |
 | **exact / prefix / fuzzy / override search** | The four `IntentCardIndex` matchers: exact clause postings; longest *consecutive* revealed-clause prefix; rarity-weighted token/bigram overlap (paraphrase-tolerant); and old-intent + new-clause reconciliation after an override. |
 | **prefix length** | How many leading card clauses of a product match the revealed clauses in order. Longer = stronger evidence. |
 | **phrase / PhraseReranker** | A lightweight coverage re-ranker scoring how many query phrases a candidate covers; contributes `phrase_rank` to the evidence route. |
@@ -543,9 +565,9 @@ Every non-obvious term used in `starter/agent.py` and the docs:
 | **backfill** | Topping up a short list from BM25 + semantic results to reach `response_limit`. |
 | **deferral** | Returning no recommendations on the earliest turn(s) (`MIN_RECOMMEND_TURN`) or for a just-declared override. |
 | **RERANK_WINDOW / RRF_K / BM25_POOL** | Constants: rerank window depth (30); default fusion_k (20); candidate pool size per route (250). |
-| **final-turn fill** | The turn-10 coverage strategy: continue the fuzzy walk, appending the next best still-unseen candidates in rank order (best-first). Replaced earlier hand-tuned rank windows after an A/B showed best-first generalises at least as well (§7.2). |
+| **final-turn fill** | The turn-10 coverage strategy: continue the fuzzy walk, appending the next best still-unseen candidates in rank order (best-first). Replaced earlier hand-tuned rank windows after an A/B showed best-first generalises at least as well (§10.3). |
 
-## 12. Runtime characteristics
+## 15. Runtime characteristics
 
 - **Two LLM calls per turn** when enabled (intent + rerank), gated so the rerank
   is skipped whenever its output would be discarded.
@@ -558,16 +580,16 @@ Every non-obvious term used in `starter/agent.py` and the docs:
 - Deterministic retrieval and ranking are byte-reproducible for a fixed catalog
   and conversation.
 
-## 13. Data and leakage safety
+## 16. Data and leakage safety
 
 The runtime agent contains no public/extended sample IDs, target ASIN mappings,
 or target-specific rules, and never reads evaluator ground-truth labels. Ranking
 uses only catalog fields, anonymous profile info, and conversation messages
-supplied through the official interface. The final-turn fill (§7.2) is a
+supplied through the official interface. The final-turn fill (§10.3) is a
 best-first continuation of the fuzzy walk — no hand-tuned rank constants, no
 sample-specific rules. No ASINs are ever placed in an LLM prompt.
 
-## 14. Main files
+## 17. Main files
 
 | File | Purpose |
 |---|---|
@@ -585,7 +607,7 @@ sample-specific rules. No ASINs are ever placed in an LLM prompt.
 | `docs/agent_api_contract.json` | Official response contract |
 | `docs/competition_reference.md` | Competition rules, metrics, submission requirements |
 
-## 15. Future improvements
+## 18. Future improvements
 
 - Replace feature hashing with a compact local sentence-embedding model.
 - Learn route weights from session-outcome features with strict cross-validation.
