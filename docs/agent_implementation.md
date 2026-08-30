@@ -334,15 +334,25 @@ Guarantees: a natural-language message; one valid `ask_attribute`; ≤ 10 unique
 
 ## 9. Verified results
 
-Two modes. **Deterministic** uses no network and is the reproducible baseline.
-**LLM-enabled** adds `gpt-4.1-mini` intent parsing + semantic reranking
-(two calls per turn).
+Two modes. **Non-LLM (deterministic)** uses no network and is the reproducible
+baseline. **LLM-enabled** adds `gpt-4.1-mini` intent parsing + semantic
+reranking (two calls per turn).
 
 All figures below are re-measured on the **current OpenAI codebase**. (Earlier
 docs quoted a 0.9726/0.9682 deterministic baseline; those predate the
 Gemini→OpenAI switch and were never re-measured — they are superseded here.)
 
-### Deterministic baseline (no API key, byte-identical across runs)
+### Non-LLM (deterministic) — verified
+
+Measured with **no API key present** (`OPENAI_API_KEY` unset), so every turn
+runs the deterministic pipeline and issues zero network calls. Byte-identical
+across repeated runs. Reproduce with any of:
+
+```bash
+python scripts/evaluate_datasets.py --no-llm      # explicit opt-out flag
+DISABLE_LLM=1 python scripts/evaluate_datasets.py # env-var opt-out
+# …or simply run with no OPENAI_API_KEY in the environment or .env
+```
 
 | Test set | Sessions | HitRate@10 | MRR | MTTC | Efficiency | TechnicalScore |
 |---|---:|---:|---:|---:|---:|---:|
@@ -358,23 +368,61 @@ eval run.
 | Test set | Sessions | HitRate@10 | MRR | MTTC | Efficiency | TechnicalScore | Tokens | Wall-clock |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | Default public | 200 | 0.990 | 0.949643 | 3.075 | 0.7925 | **0.938393** | 1,249,783 | ~22.4 min |
-| Extended holdout | 500 | _measuring — run in progress_ | | | | | | |
+| Extended holdout | 500 | 0.986 | 0.961324 | 3.080 | 0.7920 | **0.939797** | 297,083 | ~19.8 min |
 
 The gating + wide-window guards cut ~170k tokens versus the ungated pipeline
 and lifted the default-public score from 0.934214.
+
+> **Token figures are not directly comparable across the two rows.** They were
+> captured by different harnesses: the default-public row (1.25M tokens ≈ 6.2k
+> per session) reflects a largely cold prompt cache, while the extended-holdout
+> row (297k tokens ≈ 0.6k per session) was measured with a warm SHA-256 prompt
+> cache absorbing most repeated intent/rerank prompts. Treat each row's tokens
+> as the cost *of that run*, not as evidence that the larger set is cheaper. A
+> clean apples-to-apples cost comparison would require re-running both under one
+> harness with identical cache state.
 
 **LLM mode is the default** (it runs whenever a key is present) and satisfies
 the competition's "Multi-Route Retrieval → LLM Semantic Ranking" requirement.
 Note the trade-off, though: its score sits **below** the deterministic
 fallback, because the deterministic RRF ranker is already strongly tuned while
 the reranker sees only product titles. So the automatic no-key fallback is not
-just a safety net — it is currently the higher-scoring, zero-cost path.
-Extended/persona splits were only measured deterministically (cost).
+just a safety net — it is currently the higher-scoring, zero-cost path. This
+holds on **both** test sets: deterministic beats LLM 0.966400 vs 0.938393 on
+default public, and 0.959927 vs 0.939797 on the extended holdout. (Persona
+splits remain deterministic-only.)
 
 ```text
 Efficiency     = clip((11 − MTTC) / 10, 0, 1)
 TechnicalScore = 0.50 × HitRate@10 + 0.30 × MRR + 0.20 × Efficiency
 ```
+
+### 9.1 Fallback behaviour — what happens when the network is cut
+
+The organizer's Model Policy allows the final scoring run to have **network
+access disabled**. The agent is built so that this degrades to the
+deterministic path *immediately and safely* — it never blocks, retries in a
+loop, or crashes waiting on the network. Three triggers, one outcome:
+
+| Trigger | When it fires | Result |
+|---|---|---|
+| **No API key** | `OPENAI_API_KEY` absent from env and `.env` at startup | LLM parser and reranker are never constructed; every turn is deterministic from turn 1. Zero network calls, zero tokens. |
+| **First LLM failure (whole-run latch)** | A single hard failure — timeout, DNS/connection error, HTTP error, empty/malformed response — on *either* the intent call or the rerank call | The agent latches LLM **off for the rest of the process** (all remaining turns *and* sessions). The reranker is dropped and the intent parser's LLM handle is cleared, so no further network attempts are made. The turn that failed already fell back to deterministic. |
+| **Explicit opt-out** | `--no-llm` flag, or `DISABLE_LLM=1`, or `use_llm=False` in the `Agent(...)` constructor | Deterministic from turn 1, identical to the no-key case. |
+
+Key points:
+
+- **One failure is enough.** We do not retry the LLM per turn after a failure —
+  a cut network would otherwise cause every subsequent turn to eat the full
+  timeout. The latch converts the first failure into a permanent, zero-latency
+  deterministic mode. See `Agent._latch_llm_off()`.
+- **Low confidence is *not* a failure.** If the LLM answers but with confidence
+  below the 0.5 threshold, that single turn uses the deterministic result but
+  the LLM stays enabled — a weak answer is not a network problem.
+- **The scored path may well be the deterministic one.** Because deterministic
+  mode scores higher (0.966400 vs 0.938393 on default public) and is what runs
+  under a disabled network, the verified deterministic numbers above are the
+  ones most likely to reflect the official offline run.
 
 ## 10. Setup and execution
 
@@ -411,6 +459,18 @@ python scripts/evaluate_datasets.py
 # Tests (all LLM calls are mocked — no key or network needed)
 python -m pytest tests/ -q
 ```
+
+**Forcing deterministic mode even when a key is present.** You do not have to
+delete your key to run offline. Any of these opts out of the LLM explicitly:
+
+```bash
+python scripts/evaluate_datasets.py --no-llm   # CLI flag (also on evaluate_splits/robust, local_evaluator)
+DISABLE_LLM=1 python scripts/evaluate_datasets.py  # environment variable
+```
+
+Programmatically, construct the agent with `Agent(catalog_path, use_llm=False)`.
+All three routes set the internal key to `None`, so the LLM parser and reranker
+are never created — behaviour is identical to having no key at all.
 
 ## 11. Glossary of terms
 

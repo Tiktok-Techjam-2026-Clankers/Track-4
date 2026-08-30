@@ -174,14 +174,17 @@ with the reranker gating + wide-window guards enabled:
 | Dataset | Hit@10 | MRR | MTTC | Score | vs Deterministic |
 |---|---|---|---|---|---|
 | Default public (200) | 0.990 | 0.9496 | 3.075 | 0.938393 | -0.028 |
+| Extended holdout (500) | 0.986 | 0.9613 | 3.080 | 0.939797 | -0.020 |
 
-Run cost: ~22.4 min wall-clock, 1,249,783 tokens (1,066,281 prompt +
-183,502 completion). The two guards cut ~170k tokens and lifted the score from
-an ungated 0.934214.
+Run cost — default public: ~22.4 min, 1,249,783 tokens (cold cache). Extended
+holdout: ~19.8 min, 297,083 tokens (warm SHA-256 prompt cache). The token
+counts are **not** directly comparable across the two rows because cache state
+differed between the runs. The two guards cut ~170k tokens on default-public and
+lifted its score from an ungated 0.934214.
 
-The LLM-enabled score sits below the deterministic 0.966400 baseline: the
-deterministic RRF ranker is already strongly tuned, and the reranker sees only
-product titles. The full LLM pipeline is retained for its semantic-ranking
-capability; deterministic mode is the higher-scoring, zero-cost fallback.
-Extended (500) and persona splits have only been measured in deterministic
-mode (see above) — the LLM pipeline was not re-run on them due to cost.
+The LLM-enabled score sits below the deterministic baseline on both sets
+(0.938393 vs 0.966400 default; 0.939797 vs 0.959927 extended): the deterministic
+RRF ranker is already strongly tuned, and the reranker sees only product titles.
+The full LLM pipeline is retained for its semantic-ranking capability;
+deterministic mode is the higher-scoring, zero-cost fallback. Persona splits have
+only been measured in deterministic mode.

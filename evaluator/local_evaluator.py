@@ -300,10 +300,18 @@ def main() -> None:
     parser.add_argument("--catalog", default="data/catalog.jsonl")
     parser.add_argument("--dataset", default="data/public_set.jsonl")
     parser.add_argument("--output", default="results.json")
+    parser.add_argument(
+        "--no-llm",
+        action="store_true",
+        help="Disable all LLM calls; run the deterministic pipeline only.",
+    )
     args = parser.parse_args()
     samples = load_jsonl(args.dataset)
     catalog_ids, categories, products = catalog_index(args.catalog)
-    result = evaluate(Agent(args.catalog), samples, catalog_ids, categories, products)
+    result = evaluate(
+        Agent(args.catalog, use_llm=not args.no_llm),
+        samples, catalog_ids, categories, products,
+    )
     Path(args.output).write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({key: value for key, value in result.items() if key != "sessions"}, indent=2))
 

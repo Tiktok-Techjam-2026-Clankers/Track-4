@@ -339,9 +339,11 @@ class HybridIntentParser(IntentParser):
         self,
         deterministic: DeterministicIntentParser,
         llm: OpenAIIntentParser | None = None,
+        on_hard_failure: "callable | None" = None,
     ) -> None:
         self.deterministic = deterministic
         self.llm = llm
+        self.on_hard_failure = on_hard_failure
 
     def parse(self, message: str, conversation_state: dict) -> IntentResult:
         if self.llm is not None:
@@ -350,6 +352,10 @@ class HybridIntentParser(IntentParser):
                 if result.confidence >= LLM_CONFIDENCE_THRESHOLD:
                     return result
             except Exception:
-                pass
+                # Hard failure (network/transport/schema) — a low-confidence
+                # result does NOT raise and so does NOT latch. Notify the owner
+                # so the whole run can drop to deterministic mode.
+                if self.on_hard_failure is not None:
+                    self.on_hard_failure()
 
         return self.deterministic.parse(message, conversation_state)

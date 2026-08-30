@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
 import time
 from pathlib import Path
@@ -44,6 +45,14 @@ def format_row(label: str, result: dict) -> str:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--no-llm",
+        action="store_true",
+        help="Disable all LLM calls; run the deterministic pipeline only.",
+    )
+    args = parser.parse_args()
+
     require_file(CATALOG_PATH)
     for _, dataset_path in DATASETS:
         require_file(dataset_path)
@@ -51,7 +60,7 @@ def main() -> None:
     catalog_ids, categories, products = catalog_index(CATALOG_PATH)
 
     t0 = time.perf_counter()
-    agent = Agent(CATALOG_PATH)
+    agent = Agent(CATALOG_PATH, use_llm=not args.no_llm)
     startup = time.perf_counter() - t0
 
     prompt_tokens = 0

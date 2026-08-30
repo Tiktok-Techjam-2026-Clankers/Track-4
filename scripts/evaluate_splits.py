@@ -38,6 +38,11 @@ def main() -> None:
     parser.add_argument("--catalog", default="data/catalog.jsonl")
     parser.add_argument("--output-dir", default="benchmark-results")
     parser.add_argument(
+        "--no-llm",
+        action="store_true",
+        help="Disable all LLM calls; run the deterministic pipeline only.",
+    )
+    parser.add_argument(
         "--allow-locked-test",
         action="store_true",
         help="required to evaluate the synthetic test split",
@@ -49,7 +54,7 @@ def main() -> None:
     catalog_path = Path(args.catalog)
     catalog_ids, categories, products = catalog_index(catalog_path)
     t0 = time.perf_counter()
-    agent = Agent(catalog_path)
+    agent = Agent(catalog_path, use_llm=not args.no_llm)
     startup = time.perf_counter() - t0
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

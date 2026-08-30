@@ -316,6 +316,32 @@ class HybridIntentParserTest(unittest.TestCase):
         )
         self.assertEqual(result.source, "deterministic")
 
+    def test_hard_failure_fires_latch_callback(self) -> None:
+        """A hard LLM failure (exception) invokes on_hard_failure exactly once."""
+        llm = MagicMock(spec=OpenAIIntentParser)
+        llm.parse.side_effect = RuntimeError("API error")
+        calls = []
+        parser = HybridIntentParser(
+            self.deterministic, llm, on_hard_failure=lambda: calls.append(1),
+        )
+        result = parser.parse("anything", {"active_query": "shoes"})
+        self.assertEqual(result.source, "deterministic")
+        self.assertEqual(len(calls), 1)
+
+    def test_low_confidence_does_not_fire_latch(self) -> None:
+        """A low-confidence answer is not a network failure — no latch."""
+        llm = MagicMock(spec=OpenAIIntentParser)
+        llm.parse.return_value = IntentResult(
+            mode="override", confidence=0.1, source="llm",
+        )
+        calls = []
+        parser = HybridIntentParser(
+            self.deterministic, llm, on_hard_failure=lambda: calls.append(1),
+        )
+        result = parser.parse("maybe?", {"active_query": ""})
+        self.assertEqual(result.source, "deterministic")
+        self.assertEqual(len(calls), 0)
+
 
 class StateOperationsTest(unittest.TestCase):
     """Test that IntentResult fields map to correct state operations."""

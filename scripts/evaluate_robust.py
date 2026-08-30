@@ -235,6 +235,11 @@ def main() -> None:
     parser.add_argument("--cases-dir", default="data/robust")
     parser.add_argument("--output-dir", default="benchmark-results/robust")
     parser.add_argument("--allow-locked-test", action="store_true")
+    parser.add_argument(
+        "--no-llm",
+        action="store_true",
+        help="Disable all LLM calls; run the deterministic pipeline only.",
+    )
     args = parser.parse_args()
     if args.split == "test" and not args.allow_locked_test:
         raise SystemExit("robust test is locked; freeze configuration and pass --allow-locked-test")
@@ -243,7 +248,7 @@ def main() -> None:
         str(row["parent_asin"]) for row in _load(catalog_path)
     }
     t0 = time.perf_counter()
-    agent = Agent(catalog_path)
+    agent = Agent(catalog_path, use_llm=not args.no_llm)
     startup = time.perf_counter() - t0
     result = evaluate(agent, _load(Path(args.cases_dir) / f"{args.split}.jsonl"), catalog_ids)
     elapsed = time.perf_counter() - t0

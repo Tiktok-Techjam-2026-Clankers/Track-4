@@ -238,6 +238,73 @@ class AgentContractTest(unittest.TestCase):
         })
 
 
+class LLMControlTest(unittest.TestCase):
+    """The use_llm arg, DISABLE_LLM env var, and whole-run latch."""
+
+    _PRODUCTS = [
+        {
+            "parent_asin": "A", "title": "Blue running shoe",
+            "categories": ["Shoes"], "features": [], "details": {},
+            "description": [], "store": "Example",
+        },
+    ]
+
+    def _make_catalog(self, directory: str) -> Path:
+        catalog = Path(directory) / "catalog.jsonl"
+        catalog.write_text(
+            "".join(json.dumps(p) + "\n" for p in self._PRODUCTS),
+            encoding="utf-8",
+        )
+        return catalog
+
+    def test_use_llm_false_suppresses_llm_even_with_key(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            catalog = self._make_catalog(directory)
+            with patch("starter.agent.load_api_key", return_value="sk-fake"):
+                agent = Agent(catalog, use_llm=False)
+        self.assertIsNone(agent.reranker)
+        self.assertIsNone(agent.intent_parser.llm)
+        self.assertFalse(agent._llm_active)
+
+    def test_disable_llm_env_suppresses_llm_even_with_key(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            catalog = self._make_catalog(directory)
+            with patch("starter.agent.load_api_key", return_value="sk-fake"), \
+                    patch.dict("os.environ", {"DISABLE_LLM": "1"}):
+                agent = Agent(catalog, use_llm=True)
+        self.assertIsNone(agent.reranker)
+        self.assertIsNone(agent.intent_parser.llm)
+        self.assertFalse(agent._llm_active)
+
+    def test_key_present_enables_llm(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            catalog = self._make_catalog(directory)
+            with patch("starter.agent.load_api_key", return_value="sk-fake"), \
+                    patch.dict("os.environ", {}, clear=False):
+                import os as _os
+                _os.environ.pop("DISABLE_LLM", None)
+                agent = Agent(catalog, use_llm=True)
+        self.assertIsNotNone(agent.reranker)
+        self.assertIsNotNone(agent.intent_parser.llm)
+        self.assertTrue(agent._llm_active)
+
+    def test_latch_disables_llm_and_is_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            catalog = self._make_catalog(directory)
+            with patch("starter.agent.load_api_key", return_value="sk-fake"):
+                import os as _os
+                _os.environ.pop("DISABLE_LLM", None)
+                agent = Agent(catalog, use_llm=True)
+            self.assertTrue(agent._llm_active)
+            agent._latch_llm_off()
+            self.assertFalse(agent._llm_active)
+            self.assertIsNone(agent.reranker)
+            self.assertIsNone(agent.intent_parser.llm)
+            # Idempotent — a second failure must not raise.
+            agent._latch_llm_off()
+            self.assertFalse(agent._llm_active)
+
+
 class ComputeWeightsTest(unittest.TestCase):
     def test_default_buying_weights(self) -> None:
         weights, k = HybridRanker.compute_weights("buying")
@@ -327,7 +394,7 @@ class LLMRerankerTest(unittest.TestCase):
         self.assertEqual(result, [("A", 1.0)])
         self.assertEqual(pt, 0)
 
-    @patch("starter.agent.call_openai")
+    @patch("starter.ranking.call_openai")
     def test_rerank_reorders_on_success(self, mock_call) -> None:
         from starter.agent import LLMReranker
         mock_call.return_value = ({"order": [2, 1]}, 50, 20)
@@ -338,7 +405,7 @@ class LLMRerankerTest(unittest.TestCase):
         self.assertEqual(result[0][0], "B")
         self.assertEqual(pt, 50)
 
-    @patch("starter.agent.call_openai")
+    @patch("starter.ranking.call_openai")
     def test_rerank_falls_back_on_api_failure(self, mock_call) -> None:
         from starter.agent import LLMReranker
         mock_call.return_value = (None, 0, 0)
