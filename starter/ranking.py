@@ -9,6 +9,7 @@ here so tests patch ``starter.ranking.call_openai``.
 from __future__ import annotations
 
 import hashlib
+import threading
 
 from starter.intent_parser import call_openai
 from starter.text_utils import *  # noqa: F401,F403 — shared helpers/constants
@@ -44,6 +45,7 @@ class LLMReranker:
         self._timeout = timeout
         self._cache: dict[str, list[int]] = {}
         self._cache_size = cache_size
+        self._cache_lock = threading.Lock()
         self._on_failure = on_failure
 
     def rerank(
@@ -74,7 +76,8 @@ class LLMReranker:
         cache_key = hashlib.sha256(
             (system_prompt + product_list).encode("utf-8")
         ).hexdigest()
-        cached = self._cache.get(cache_key)
+        with self._cache_lock:
+            cached = self._cache.get(cache_key)
         if cached is not None:
             reordered = self._apply_order(cached, head, ranked[limit:])
             return reordered, 0, 0
@@ -99,10 +102,11 @@ class LLMReranker:
         except (TypeError, ValueError):
             return ranked, pt, ct
 
-        if len(self._cache) >= self._cache_size:
-            oldest = next(iter(self._cache))
-            del self._cache[oldest]
-        self._cache[cache_key] = indices
+        with self._cache_lock:
+            if len(self._cache) >= self._cache_size:
+                oldest = next(iter(self._cache))
+                del self._cache[oldest]
+            self._cache[cache_key] = indices
 
         reordered = self._apply_order(indices, head, ranked[limit:])
         return reordered, pt, ct

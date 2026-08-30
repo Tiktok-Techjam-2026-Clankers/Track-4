@@ -25,6 +25,8 @@ consecutive deterministic runs are byte-identical.
 | Deterministic | Extended holdout | 500 | 0.998 | 0.9835 | 2.706 | **0.959927** |
 | LLM (gpt-4.1-mini) | Public | 200 | 0.990 | 0.9496 | 3.075 | 0.938393 |
 | LLM (gpt-4.1-mini) | Extended holdout | 500 | 0.940 | 0.9080 | 3.692 | 0.888563 |
+| LLM (gpt-4.1-nano) | Public | 200 | 1.000 | 0.9660 | 3.135 | 0.947104 |
+| LLM (gpt-4.1-nano) | Extended holdout | 500 | 0.942 | 0.9083 | 3.656 | 0.890368 |
 
 ```text
 TechnicalScore = 0.50 × Hit@10 + 0.30 × MRR + 0.20 × Efficiency
@@ -51,6 +53,8 @@ Token usage is a feasibility metric, not part of the TechnicalScore.
 | Deterministic | Public + Extended (700) | 0 / 0 | **$0.00** | ~191 s total (~39 s one-time index build) | ~0.22 s |
 | LLM (gpt-4.1-mini) | Public (200) | 1,249,783 total | ~$0.73 | ~22.4 min | ~6.7 s |
 | LLM (gpt-4.1-mini) | Extended (500) | 1,101,929 / 201,125 | ~$0.76 | ~73.6 min² | ~8.8 s² |
+| LLM (gpt-4.1-nano) | Public (200) | 408,879 / 71,595 | ~$0.07³ | ~2.8 min³ | ~0.83 s³ |
+| LLM (gpt-4.1-nano) | Extended (500) | 1,119,223 / 199,075 | ~$0.19³ | ~7.2 min³ | ~0.86 s³ |
 
 ¹ Estimated at gpt-4.1-mini list pricing (≈ $0.40 / 1M input, ≈ $1.60 / 1M
 output) — **verify current rates**; treat as order-of-magnitude (~$0.002–0.004
@@ -58,6 +62,11 @@ per session).
 ² Extended LLM wall-clock and per-session time are inflated by 7 Agent rebuilds
 (each reloads the catalog) used to force full LLM coverage past the fallback
 latch; pure eval time is lower.
+³ nano measured differently: 8 parallel workers with a 20 s timeout and the
+whole-run latch neutralised on the measurement instance (no `starter/` change),
+so wall-clock/per-session are far lower than the serially-rebuilt mini rows and
+not directly comparable. Cost at nano list pricing (≈ $0.10 / 1M input, ≈ $0.40
+/ 1M output) — **verify current rates**.
 
 The **deterministic path costs nothing and needs no network** — it is the
 default scored path. The LLM layer is an optional enhancement whose feasibility

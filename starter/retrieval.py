@@ -11,6 +11,7 @@ import heapq
 import math
 import re
 import sqlite3
+import threading
 import zlib
 from collections import Counter
 
@@ -24,6 +25,11 @@ class BM25Index:
 
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
+        # A single in-memory connection is shared across concurrent sessions
+        # (see scripts/fast_eval.py). Queries are milliseconds against an LLM
+        # call's hundreds, so serialising them with a lock costs nothing and
+        # keeps SQLite access thread-safe.
+        self._lock = threading.Lock()
 
     def search(self, query: str, limit: int = BM25_POOL) -> list[str]:
         terms = _unique_terms(query)
@@ -31,12 +37,13 @@ class BM25Index:
             return []
         expression = " OR ".join(f'"{term}"' for term in terms)
         try:
-            rows = self.connection.execute(
-                "SELECT parent_asin FROM products WHERE products MATCH ? "
-                "ORDER BY bm25(products, 0.0, 6.0, 4.0, 2.5, 2.5, 1.5, 1.0) "
-                "LIMIT ?",
-                (expression, limit),
-            ).fetchall()
+            with self._lock:
+                rows = self.connection.execute(
+                    "SELECT parent_asin FROM products WHERE products MATCH ? "
+                    "ORDER BY bm25(products, 0.0, 6.0, 4.0, 2.5, 2.5, 1.5, 1.0) "
+                    "LIMIT ?",
+                    (expression, limit),
+                ).fetchall()
         except sqlite3.OperationalError:
             return []
         return [str(row[0]) for row in rows]
@@ -77,8 +84,19 @@ class ConstraintIndex:
 class IntentCardIndex:
     """Exact structured lookup over visible catalog-derived intent clauses."""
 
+    # Constraint-introducing phrases. The first three are what the *local*
+    # evaluator emits; the rest widen coverage to natural phrasings an official
+    # evaluator might use ("it must be leather", "I need waterproof boots")
+    # without depending on the simulator's exact wording. The colon is optional
+    # so bare requirements ("must be leather") are captured too. Extraction is
+    # still gated by catalog-clause membership (see ``revealed_constraints``),
+    # so a marker firing on a non-constraint sentence contributes nothing.
     MARKER_RE = re.compile(
-        r"(?:key requirement is|what matters is|what i need is)\s*:\s*(.+)$",
+        r"(?:"
+        r"key requirement is|what matters is|what i need is|requirement is|"
+        r"it must be|it needs to be|must have|needs to be|need it to be|"
+        r"i want|i'd like|i would like|i prefer|i care about|gotta be"
+        r")\s*:?\s*(.+)$",
         re.IGNORECASE,
     )
 

@@ -179,6 +179,24 @@ with the reranker gating + wide-window guards enabled:
 Run cost — default public: ~22.4 min, 1,249,783 tokens (full coverage). Extended
 holdout: ~73.6 min, 1,303,054 tokens, all 500/500 sessions confirmed LLM-driven.
 
+### gpt-4.1-nano (same two-call pipeline)
+
+Full-coverage measurement of the smaller model. nano's earlier latch was tail
+latency (~2.3 s) crossing the stock 3 s reranker timeout, not bad JSON (10/10
+valid on a direct probe) — measured here with a 20 s timeout, 8 parallel
+workers, and the whole-run latch neutralised on the measurement instance only
+(no `starter/` change; single-turn transient fallbacks counted: 2/200 and
+8/500, reranker 0):
+
+| Dataset | Hit@10 | MRR | MTTC | Score | vs Deterministic |
+|---|---|---|---|---|---|
+| Default public (200) | 1.000 | 0.9660 | 3.135 | 0.947104 | -0.019 |
+| Extended holdout (500) | 0.942 | 0.9083 | 3.656 | 0.890368 | -0.070 |
+
+Run cost — default public: ~2.8 min, 480,474 tokens; extended holdout: ~7.2 min,
+1,318,298 tokens; 200/200 and 500/500 confirmed LLM-driven. nano edges mini in
+the LLM bracket but both remain below deterministic.
+
 > A keyed LLM run is **not** byte-reproducible. The reranker's 3 s no-retry
 > timeout trips the whole-run latch (`_latch_llm_off()`) on any slow call,
 > disabling the LLM for the rest of the process. A plain single-process extended

@@ -386,15 +386,43 @@ and lifted the default-public score from 0.934214.
 > (7 times). Because that rebuild reloads the catalog each time, its wall-clock
 > is inflated. Only the deterministic path is byte-stable across runs.
 
+### LLM-enabled (OpenAI `gpt-4.1-nano`, intent parsing + semantic reranking)
+
+Full-coverage measurement of the smaller/cheaper model. Diagnosis first: a
+direct probe returned valid JSON on 10/10 calls (avg ~1.6 s, tail ~2.3 s), so
+nano's earlier latch was **latency**, not malformed output — its tail crosses
+the stock 3 s reranker timeout under parallel load. Given a 20 s timeout it
+delivers clean full coverage.
+
+| Test set | Sessions | HitRate@10 | MRR | MTTC | Efficiency | TechnicalScore | Tokens | Wall-clock |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Default public | 200 | 1.000 | 0.966012 | 3.135 | 0.7865 | **0.947104** | 480,474 | ~2.8 min |
+| Extended holdout | 500 | 0.942 | 0.908293 | 3.656 | 0.7344 | **0.890368** | 1,318,298 | ~7.2 min |
+
+> **Measurement method (measurement instance only — no `starter/` change).**
+> To get honest 200/200 and 500/500 coverage without the latch contaminating a
+> shared-agent run, the measurement instance raised the live intent/rerank
+> timeouts to 20 s and neutralised the whole-run latch, so a rare transient blip
+> degrades only that single turn (all counted and reported) instead of the whole
+> run. Parallelised across 8 workers (`scripts/fast_eval.py` design). Transient
+> single-turn fallbacks: 2/~600 (default), 8/~1,700 (extended); reranker never
+> fell back. Token accounting is per-session cumulative (not the official loop's
+> per-turn double-count). This path is still **not** byte-reproducible; only the
+> deterministic path is.
+
+nano edges out mini in the LLM bracket (+0.0087 default, +0.0018 extended) and
+is faster/cheaper per successful call — the failure mode was speed, not quality.
+
 **LLM mode is the default** (it runs whenever a key is present) and satisfies
 the competition's "Multi-Route Retrieval → LLM Semantic Ranking" requirement.
 Note the trade-off, though: its score sits **below** the deterministic
 fallback, because the deterministic RRF ranker is already strongly tuned while
 the reranker sees only product titles. So the automatic no-key fallback is not
 just a safety net — it is currently the higher-scoring, zero-cost path. This
-holds on **both** test sets: deterministic beats LLM 0.966400 vs 0.938393 on
-default public, and 0.959927 vs 0.888563 on the extended holdout. (Persona
-splits remain deterministic-only.)
+holds on **both** test sets and **both** LLM models: deterministic beats LLM
+0.966400 vs 0.947104 (nano) / 0.938393 (mini) on default public, and 0.959927
+vs 0.890368 (nano) / 0.888563 (mini) on the extended holdout. (Persona splits
+remain deterministic-only.)
 
 ```text
 Efficiency     = clip((11 − MTTC) / 10, 0, 1)

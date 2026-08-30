@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import ssl
+import threading
 import urllib.error
 import urllib.request
 from abc import ABC, abstractmethod
@@ -281,6 +282,7 @@ class OpenAIIntentParser(IntentParser):
         self._timeout = timeout
         self._cache: dict[str, IntentResult] = {}
         self._cache_size = cache_size
+        self._cache_lock = threading.Lock()
 
     def parse(self, message: str, conversation_state: dict) -> IntentResult:
         tags = conversation_state.get("preference_tags") or []
@@ -296,7 +298,8 @@ class OpenAIIntentParser(IntentParser):
         cache_key = hashlib.sha256(
             (system_prompt + message).encode("utf-8")
         ).hexdigest()
-        cached = self._cache.get(cache_key)
+        with self._cache_lock:
+            cached = self._cache.get(cache_key)
         if cached is not None:
             return cached
 
@@ -313,10 +316,11 @@ class OpenAIIntentParser(IntentParser):
         result.prompt_tokens = prompt_tokens
         result.completion_tokens = completion_tokens
 
-        if len(self._cache) >= self._cache_size:
-            oldest = next(iter(self._cache))
-            del self._cache[oldest]
-        self._cache[cache_key] = result
+        with self._cache_lock:
+            if len(self._cache) >= self._cache_size:
+                oldest = next(iter(self._cache))
+                del self._cache[oldest]
+            self._cache[cache_key] = result
         return result
 
     def _call_api(

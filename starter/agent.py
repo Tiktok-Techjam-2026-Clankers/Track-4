@@ -71,12 +71,19 @@ class Agent:
         self,
         catalog_path: str | Path = "data/catalog.jsonl",
         use_llm: bool = True,
+        model: str | None = None,
     ) -> None:
         self.catalog_path = Path(catalog_path)
-        self.connection = sqlite3.connect(":memory:")
+        # check_same_thread=False lets one agent serve concurrent sessions
+        # (scripts/fast_eval.py); BM25Index serialises access with a lock.
+        self.connection = sqlite3.connect(":memory:", check_same_thread=False)
         self.intent_classifier = IntentClassifier()
         self.sessions: dict[str, ConversationMemory] = {}
         self._llm_usage: dict[str, tuple[int, int]] = {}
+        # Model is configurable for A/B measurement (e.g. gpt-4.1-nano). The
+        # default preserves the documented gpt-4.1-mini behaviour; override via
+        # the constructor or the OPENAI_MODEL environment variable.
+        self.model = model or os.environ.get("OPENAI_MODEL", "").strip() or "gpt-4.1-mini"
         deterministic = DeterministicIntentParser(self.intent_classifier)
         # LLM is the default; it is disabled when the caller opts out
         # (use_llm=False), DISABLE_LLM is set, or no API key is present.
@@ -84,7 +91,7 @@ class Agent:
             api_key = load_api_key()
         else:
             api_key = None
-        llm = OpenAIIntentParser(api_key) if api_key else None
+        llm = OpenAIIntentParser(api_key, model=self.model) if api_key else None
         self.intent_parser = HybridIntentParser(
             deterministic, llm, on_hard_failure=self._latch_llm_off
         )
@@ -92,7 +99,8 @@ class Agent:
         self._llm_active = api_key is not None
         identifiers, semantic_documents, intent_cards, category_keys = self._build_catalog_indexes()
         self.reranker = (
-            LLMReranker(api_key, self.product_titles, on_failure=self._latch_llm_off)
+            LLMReranker(api_key, self.product_titles, model=self.model,
+                        on_failure=self._latch_llm_off)
             if api_key else None
         )
         self.bm25 = BM25Index(self.connection)
@@ -252,18 +260,35 @@ class Agent:
         constraint_results = self.constraints.search(query)
         category_all = self.categories.search(memory.history)
         category_results = category_all[:BM25_POOL]
+        # In LLM mode, route the parser's structured constraints through the same
+        # catalog-clause matcher as marker-extracted text, so card retrieval no
+        # longer depends on the evaluator's specific disclosure phrasing. In
+        # deterministic mode ``add_constraints`` is empty, so ``card_messages`` is
+        # exactly ``memory.active_messages`` and the scored path is byte-identical.
+        card_messages = memory.active_messages
+        if intent_result.source == "llm" and intent_result.add_constraints:
+            llm_values = [
+                str(value).strip()
+                for value in intent_result.add_constraints.values()
+                if str(value).strip()
+            ]
+            if llm_values:
+                card_messages = [
+                    *memory.active_messages,
+                    "what matters is: " + "; ".join(llm_values),
+                ]
         use_intent_cards = memory.last_override_turn is None
         revealed_cards = (
-            self.intent_cards.revealed_constraints(memory.active_messages)
+            self.intent_cards.revealed_constraints(card_messages)
             if use_intent_cards else set()
         )
         card_results = (
-            self.intent_cards.search(memory.active_messages)
+            self.intent_cards.search(card_messages)
             if use_intent_cards else []
         )
         prefix_results = (
             self.intent_cards.prefix_search(
-                memory.active_messages,
+                card_messages,
                 category_all,
                 self.popularity,
             )
@@ -281,7 +306,7 @@ class Agent:
         )
         override_pair_results = (
             self.intent_cards.override_search(
-                memory.active_messages,
+                card_messages,
                 memory.previous_intents[-1],
                 category_all,
                 self.popularity,
@@ -289,9 +314,9 @@ class Agent:
             if memory.last_override_turn is not None and memory.previous_intents else []
         )
         fuzzy_messages = (
-            [memory.previous_intents[-1], *memory.active_messages]
+            [memory.previous_intents[-1], *card_messages]
             if memory.last_override_turn is not None and memory.previous_intents
-            else memory.active_messages
+            else card_messages
         )
         fuzzy_card_results = (
             self.intent_cards.fuzzy_search(
