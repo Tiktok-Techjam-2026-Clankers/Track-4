@@ -130,3 +130,21 @@ Verified on `di-heng-3` with `OPENAI_API_KEY` unset:
 | Custom terse_paraphrase | 0.960750 |
 
 Two consecutive runs produce byte-identical results.
+
+## LLM Scores (OpenAI gpt-4.1-mini)
+
+### Standard evaluation
+
+| Dataset | Hit@10 | MRR | MTTC | Score | Delta |
+|---|---|---|---|---|---|
+| Default public (200) | 1.0000 | 0.9908 | 2.235 | 0.9726 | 0.0000 |
+| Extended (500) | 0.9980 | 0.9889 | 2.374 | 0.9682 | +0.0014 |
+
+### Persona evaluation (200 sessions each)
+
+| Persona | Hit@10 | MRR | MTTC | Score | vs Verbatim |
+|---|---|---|---|---|---|
+| verbatim | 1.0000 | 0.9908 | 2.235 | 0.9726 | — |
+| paraphrase | 0.9900 | 0.9838 | 2.795 | 0.9542 | -0.0183 |
+| terse | 0.9750 | 0.9750 | 2.845 | 0.9431 | -0.0295 |
+| terse_paraphrase | 1.0000 | 0.9975 | 2.870 | 0.9618 | -0.0107 |
