@@ -368,19 +368,23 @@ eval run.
 | Test set | Sessions | HitRate@10 | MRR | MTTC | Efficiency | TechnicalScore | Tokens | Wall-clock |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | Default public | 200 | 0.990 | 0.949643 | 3.075 | 0.7925 | **0.938393** | 1,249,783 | ~22.4 min |
-| Extended holdout | 500 | 0.986 | 0.961324 | 3.080 | 0.7920 | **0.939797** | 297,083 | ~19.8 min |
+| Extended holdout | 500 | 0.940 | 0.908010 | 3.692 | 0.7308 | **0.888563** | 1,303,054 | ~73.6 min |
 
 The gating + wide-window guards cut ~170k tokens versus the ungated pipeline
 and lifted the default-public score from 0.934214.
 
-> **Token figures are not directly comparable across the two rows.** They were
-> captured by different harnesses: the default-public row (1.25M tokens ≈ 6.2k
-> per session) reflects a largely cold prompt cache, while the extended-holdout
-> row (297k tokens ≈ 0.6k per session) was measured with a warm SHA-256 prompt
-> cache absorbing most repeated intent/rerank prompts. Treat each row's tokens
-> as the cost *of that run*, not as evidence that the larger set is cheaper. A
-> clean apples-to-apples cost comparison would require re-running both under one
-> harness with identical cache state.
+> **A keyed LLM run is not byte-reproducible, and the extended-holdout row had
+> to be measured specially.** The reranker uses a 3 s timeout with no retry, so
+> an occasional slow call trips the whole-run latch (`_latch_llm_off()`) and
+> disables the LLM for every remaining session. A plain single-process run of
+> the extended set latched off around session ~190, leaving ~62 % of sessions
+> running deterministic (0 tokens) — which earlier produced a *contaminated*
+> 0.939797 / 297k-token figure that looked deceptively close to deterministic.
+> That was a partial-LLM artifact, **not** a warm-cache effect. The row above is
+> the honest full-coverage measurement: all 500/500 sessions confirmed
+> LLM-driven, obtained by rebuilding the Agent whenever the latch tripped
+> (7 times). Because that rebuild reloads the catalog each time, its wall-clock
+> is inflated. Only the deterministic path is byte-stable across runs.
 
 **LLM mode is the default** (it runs whenever a key is present) and satisfies
 the competition's "Multi-Route Retrieval → LLM Semantic Ranking" requirement.
@@ -389,7 +393,7 @@ fallback, because the deterministic RRF ranker is already strongly tuned while
 the reranker sees only product titles. So the automatic no-key fallback is not
 just a safety net — it is currently the higher-scoring, zero-cost path. This
 holds on **both** test sets: deterministic beats LLM 0.966400 vs 0.938393 on
-default public, and 0.959927 vs 0.939797 on the extended holdout. (Persona
+default public, and 0.959927 vs 0.888563 on the extended holdout. (Persona
 splits remain deterministic-only.)
 
 ```text

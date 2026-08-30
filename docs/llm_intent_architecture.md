@@ -174,16 +174,23 @@ with the reranker gating + wide-window guards enabled:
 | Dataset | Hit@10 | MRR | MTTC | Score | vs Deterministic |
 |---|---|---|---|---|---|
 | Default public (200) | 0.990 | 0.9496 | 3.075 | 0.938393 | -0.028 |
-| Extended holdout (500) | 0.986 | 0.9613 | 3.080 | 0.939797 | -0.020 |
+| Extended holdout (500) | 0.940 | 0.9080 | 3.692 | 0.888563 | -0.071 |
 
-Run cost — default public: ~22.4 min, 1,249,783 tokens (cold cache). Extended
-holdout: ~19.8 min, 297,083 tokens (warm SHA-256 prompt cache). The token
-counts are **not** directly comparable across the two rows because cache state
-differed between the runs. The two guards cut ~170k tokens on default-public and
-lifted its score from an ungated 0.934214.
+Run cost — default public: ~22.4 min, 1,249,783 tokens (full coverage). Extended
+holdout: ~73.6 min, 1,303,054 tokens, all 500/500 sessions confirmed LLM-driven.
+
+> A keyed LLM run is **not** byte-reproducible. The reranker's 3 s no-retry
+> timeout trips the whole-run latch (`_latch_llm_off()`) on any slow call,
+> disabling the LLM for the rest of the process. A plain single-process extended
+> run latched off ~session 190 and ran ~62 % deterministic, producing an earlier
+> *contaminated* 0.939797 / 297k-token figure — a partial-LLM artifact, not a
+> warm-cache effect. The 0.888563 row above is the honest full-coverage number,
+> measured by rebuilding the Agent whenever the latch tripped. Only the
+> deterministic path is byte-stable. The two guards cut ~170k tokens on
+> default-public and lifted its score from an ungated 0.934214.
 
 The LLM-enabled score sits below the deterministic baseline on both sets
-(0.938393 vs 0.966400 default; 0.939797 vs 0.959927 extended): the deterministic
+(0.938393 vs 0.966400 default; 0.888563 vs 0.959927 extended): the deterministic
 RRF ranker is already strongly tuned, and the reranker sees only product titles.
 The full LLM pipeline is retained for its semantic-ranking capability;
 deterministic mode is the higher-scoring, zero-cost fallback. Persona splits have

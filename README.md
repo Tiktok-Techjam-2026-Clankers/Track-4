@@ -24,7 +24,7 @@ consecutive deterministic runs are byte-identical.
 | Deterministic | Public | 200 | 1.000 | 0.9933 | 2.580 | **0.966400** |
 | Deterministic | Extended holdout | 500 | 0.998 | 0.9835 | 2.706 | **0.959927** |
 | LLM (gpt-4.1-mini) | Public | 200 | 0.990 | 0.9496 | 3.075 | 0.938393 |
-| LLM (gpt-4.1-mini) | Extended holdout | 500 | 0.986 | 0.9613 | 3.080 | 0.939797 |
+| LLM (gpt-4.1-mini) | Extended holdout | 500 | 0.940 | 0.9080 | 3.692 | 0.888563 |
 
 ```text
 TechnicalScore = 0.50 × Hit@10 + 0.30 × MRR + 0.20 × Efficiency
@@ -33,6 +33,14 @@ Efficiency     = clip((11 − MTTC) / 10, 0, 1)
 
 The extended holdout is an additional local set, not used by the agent at
 runtime. No sample IDs or target labels are embedded anywhere in `starter/`.
+
+> **Deterministic scores are byte-reproducible; keyed LLM scores are not.** In
+> LLM mode the reranker's 3 s no-retry timeout can trip the whole-run fallback
+> latch, so a single-process run mixes LLM and deterministic sessions
+> non-deterministically. The LLM extended-holdout row above is a *forced
+> full-coverage* measurement (all 500 sessions LLM-driven); a plain keyed run
+> will land somewhere between it and the deterministic score. Only the
+> deterministic rows reproduce exactly.
 
 > The deterministic pipeline outscores the LLM pipeline on both sets — the RRF
 > ranker is already strongly tuned and the reranker only sees product titles. The
