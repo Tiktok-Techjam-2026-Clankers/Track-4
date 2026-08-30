@@ -1,155 +1,210 @@
-# TechJam Conversational E-Commerce Search Challenge
+# Shopping Copilot — TechJam 2026 Track 4
 
-Build an AI shopping agent that asks useful follow-up questions and recommends the customer's hidden target product within at most 10 turns.
+A conversational product-search agent that asks useful follow-up questions and
+surfaces the customer's hidden target product within 10 turns. Built on a frozen
+50,000-product Amazon catalog (`Clothing_Shoes_and_Jewelry`, Amazon Reviews 2023).
 
-## What You Receive
+The agent runs in two interchangeable modes selected automatically by the
+presence of an API key:
 
-- A frozen catalog of 50,000 products from the `Clothing_Shoes_and_Jewelry` category of Amazon Reviews 2023.
-- 200 labeled public sessions for local development.
-- A weak BM25 starter agent and deterministic local evaluator.
-- The Agent API contract and scoring rules.
+- **Deterministic mode** (no key) — a fully local BM25 + semantic + structured
+  retrieval and rank-fusion pipeline. Zero network, zero tokens. This is the
+  higher-scoring, always-available path.
+- **LLM mode** (key present) — the same pipeline with an OpenAI `gpt-4.1-mini`
+  layer for intent parsing and semantic reranking. It degrades to deterministic
+  instantly and permanently on the first network failure.
 
-The organizer keeps 800 additional sessions private for final evaluation.
+## Verified results
 
-## Independent Agent Architecture
+Scored with the supplied local evaluator against the frozen catalog. Two
+consecutive deterministic runs are byte-identical.
 
-The implementation in `starter/agent.py` is organized into the five stages used
-by the shopping flow:
+| Mode | Dataset | Sessions | Hit@10 | MRR | MTTC | TechnicalScore |
+|---|---|---:|---:|---:|---:|---:|
+| Deterministic | Public | 200 | 1.000 | 0.9933 | 2.580 | **0.966400** |
+| Deterministic | Extended holdout | 500 | 0.998 | 0.9835 | 2.706 | **0.959927** |
+| LLM (gpt-4.1-mini) | Public | 200 | 0.990 | 0.9496 | 3.075 | 0.938393 |
+| LLM (gpt-4.1-mini) | Extended holdout | 500 | 0.986 | 0.9613 | 3.080 | 0.939797 |
 
-1. **Intent classification** distinguishes browsing, buying, and an intent
-   override.
-2. **Conversation memory** keeps active requirements, retired intent, declined
-   attributes, asked questions, and a stable recommendation ladder per session.
-3. **Product search** runs SQLite FTS5/BM25, local semantic vectors, structured
-   attribute matching, catalog-derived intent-card matching, and exact-category
-   retrieval in parallel.
-4. **Ranking** merges the routes with intent-aware Reciprocal Rank Fusion,
-   category/constraint evidence, popularity tie-breaking, and late-turn
-   exploration.
-5. **Response policy** returns a valid ranked list and one useful clarification
-   question, then repeats the flow with the shopper's next answer.
+```text
+TechnicalScore = 0.50 × Hit@10 + 0.30 × MRR + 0.20 × Efficiency
+Efficiency     = clip((11 − MTTC) / 10, 0, 1)
+```
 
-The semantic encoder and every index are built locally from visible frozen
-catalog fields. The agent makes no LLM or network calls, needs no API key, and
-reports zero token usage.
+The extended holdout is an additional local set, not used by the agent at
+runtime. No sample IDs or target labels are embedded anywhere in `starter/`.
 
-## Verified Results
+> The deterministic pipeline outscores the LLM pipeline on both sets — the RRF
+> ranker is already strongly tuned and the reranker only sees product titles. The
+> LLM layer is retained for its semantic-parsing capability and graceful
+> demonstration of conversational intent; deterministic is the default scored path.
 
-Using the supplied deterministic evaluator and frozen 50,000-product catalog:
+## Setup
 
-| Test set | Sessions | Hit Rate@10 | MRR | MTTC | TechnicalScore |
-|---|---:|---:|---:|---:|---:|
-| Default public | 200 | 1.000 | 0.990833 | 2.235 | **0.972550** |
-| Extended holdout | 500 | 1.000 | 0.990900 | 2.358 | **0.970110** |
+Python 3.10+.
 
-The extended file is an additional local holdout and is not used by the agent at
-runtime. No sample IDs or target labels are embedded in the implementation.
+```bash
+python -m pip install -r requirements.txt      # only dependency is numpy
+```
 
-## Task
-
-For each session, your agent receives an anonymized preference profile and a short customer message. Raw user IDs, review text, timestamps, and purchase history are never disclosed. On every turn the agent may:
-
-- ask a natural clarification question in `message` and identify one requested field in `ask_attribute`;
-- return a ranked list of up to 10 catalog `parent_asin` values;
-- do both in the same response.
-
-The session ends when the target product appears in the scored Top 10 or after turn 10. Sessions cover Buying, Browsing, Intent Override, and Boundary behavior.
-
-## Download the Catalog
-
-Download `catalog.jsonl.gz` from the GitHub Release attached to this repository, then run:
+Download the catalog from the GitHub Release attached to this repo:
 
 ```bash
 gzip -dk catalog.jsonl.gz
-mv catalog.jsonl data/catalog.jsonl
+mv catalog.jsonl data/catalog.jsonl            # verify against SHA256SUMS
 ```
 
-Verify the downloaded file using the published `SHA256SUMS` file.
+## Reproduce the scores
 
-## Run the Starter
-
-Python 3.10 or later is recommended. Install the local vector dependency first:
+Deterministic (no key needed — this is the scored path):
 
 ```bash
-python -m pip install -r requirements.txt
+python scripts/evaluate_datasets.py --no-llm
+# → Default 0.9664 · Extended 0.9599 · 0 tokens
 ```
+
+LLM mode (requires an OpenAI key in `.env` or `OPENAI_API_KEY`):
 
 ```bash
-python3 -m evaluator.local_evaluator
+echo "OPENAI_API_KEY=sk-..." > .env             # .env is gitignored
+python scripts/evaluate_datasets.py
 ```
 
-Run the unit and contract tests with:
+Run the test suite:
 
 ```bash
-python -m unittest discover -s tests -v
+python -m pytest tests/ -q
 ```
 
-Edit `starter/agent.py` to implement your system. Do not edit the evaluator or public labels when reporting your local score.
-The command writes per-session results and aggregate metrics to `results.json`.
+## Enabling / disabling the LLM
 
-The included weak BM25 starter scores Hit Rate@10 `0.125`, MRR `0.068034`, and
-MTTC `9.81` on the released public set. See `docs/baseline_results.json`.
+Mode is chosen by the **presence of a key**, not a command. To force
+deterministic mode use any of:
 
-## Agent Interface
+- `--no-llm` on the evaluation scripts
+- `DISABLE_LLM=1` in the environment
+- `Agent(catalog_path, use_llm=False)` in code
+- simply leaving `OPENAI_API_KEY` unset
+
+**Whole-run fallback latch:** the first *hard* LLM failure (timeout, network,
+HTTP, or empty response) disables the LLM for the rest of the process and drops
+to deterministic instantly — a cut network never costs more than one timeout. A
+low-confidence answer is not a failure and does not latch.
+
+## Architecture
+
+Every turn runs five stages. The LLM layer is optional at two points (marked ★).
+
+```
+User message + compact conversation state + anonymized profile
+        │
+        ▼
+1. Intent parsing        ★ gpt-4.1-mini (structured JSON) → deterministic fallback
+        │                   mode · constraints · confidence · suggested_question
+        ▼
+2. Conversation memory      active requirements, retired intent, declined
+                            attributes, asked questions, recommendation ladder
+        │
+        ▼
+3. Retrieval (parallel)     BM25 (FTS5) · semantic hashed-vectors · constraint
+                            TF-IDF · catalog intent-cards · exact category
+        │
+        ▼
+4. Rank fusion              intent-aware RRF with dynamic weights + adaptive
+                            fusion-k · popularity tie-break · late-turn exploration
+        │
+        ▼
+   Semantic rerank       ★ gpt-4.1-mini reorders top-20 by title → RRF order on fail
+        │
+        ▼
+5. Response policy          Top-10 + one clarification question, then repeat
+```
+
+### Module layout (`starter/`)
+
+Import direction is strictly downward.
+
+| Module | Responsibility |
+|---|---|
+| [text_utils.py](starter/text_utils.py) | regexes, constants, pure text helpers (leaf) |
+| [memory.py](starter/memory.py) | `IntentClassifier`, `ConversationMemory` |
+| [retrieval.py](starter/retrieval.py) | BM25 / constraint / intent-card / category / semantic / phrase routes |
+| [intent_parser.py](starter/intent_parser.py) | deterministic + OpenAI + hybrid intent parsers |
+| [ranking.py](starter/ranking.py) | `LLMReranker`, `HybridRanker`, `ResponseBuilder` |
+| [agent.py](starter/agent.py) | orchestrator; re-exports the public surface |
+
+The semantic encoder and every index are built locally from visible frozen
+catalog fields. LLM prompts receive **titles and query text only** — never
+`parent_asin` or product IDs. All product IDs come from the deterministic
+retrieval pipeline.
+
+## Key design decisions
+
+- **Deterministic-first.** The scored path needs no key, no network, and is
+  reproducible byte-for-byte. The LLM is an enhancement, never a dependency.
+- **Intent-aware RRF with dynamic weights.** Fusion weights and `fusion_k` adapt
+  to turn number, constraint count, and intent overrides, so late, constraint-rich
+  turns trust structured evidence more and fresh overrides lean on semantics.
+- **Catalog intent-cards.** Structured constraint clauses derived from the
+  catalog let the agent match disclosed requirements exactly, with fuzzy and
+  prefix fallbacks for paraphrases — no evaluator templates or hidden labels.
+- **Proactive clarification.** The agent asks one targeted follow-up per turn,
+  prioritising an LLM-suggested attribute, then an open question, then a fixed
+  attribute sequence — without repeating declined or answered attributes.
+- **Safe LLM integration.** SHA-256 prompt caching, strict schema validation,
+  per-call timeouts, and the whole-run fallback latch keep the LLM path from ever
+  degrading the deterministic guarantee.
+
+## Agent interface
 
 ```python
 class Agent:
-    def reset(self, session_id: str, user_profile: dict) -> None:
-        ...
+    def reset(self, session_id: str, user_profile: dict) -> None: ...
 
-    def respond(self, session_id: str, user_message: str, turn: int, top_k: int) -> dict:
+    def respond(self, session_id, user_message, turn, top_k) -> dict:
         return {
             "message": "Do you have a material preference?",
             "ask_attribute": "material",
-            "recommendations": [
-                {"parent_asin": "B000..."},
-                {"parent_asin": "B001..."}
-            ],
-            "usage": {"prompt_tokens": 120, "completion_tokens": 30}
+            "recommendations": [{"parent_asin": "B000..."}, ...],
+            "usage": {"prompt_tokens": 120, "completion_tokens": 30},
         }
 ```
 
-`ask_attribute` is one of `category`, `material`, `color`, `size`, `style`, `brand`, `budget`, `feature`, `use_case`, `other`, or `null`. See `docs/agent_api_contract.json`.
+`ask_attribute` ∈ {`category`, `material`, `color`, `size`, `style`, `brand`,
+`budget`, `feature`, `use_case`, `other`, `null`}. See
+[docs/agent_api_contract.json](docs/agent_api_contract.json).
 
-## Technical Metrics
+## Limitations & future work
 
-- **Hit Rate@10:** fraction of sessions that find the target within 10 turns.
-- **MRR:** mean reciprocal rank of the target; a miss contributes zero.
-- **MTTC:** mean first-hit turn; a miss is assigned turn 11.
-- **Reported token usage:** prompt and completion tokens returned by the team's model client.
+- The LLM reranker sees only product titles; richer per-item context (attributes,
+  descriptions) could close the gap to the deterministic ranker.
+- Clarification is metric-neutral under the current simulator (a generic reply
+  reveals a superset of constraints), so candidate-pool-aware questioning is
+  deferred — it improves the *human* experience, not the automated score.
+- Persona / robustness splits are measured in deterministic mode only.
+
+## Security & data handling
+
+- API keys are read only from `OPENAI_API_KEY` or a gitignored `.env`; never
+  logged, printed, committed, or placed in any prompt.
+- No public sample IDs, hidden labels, target ASINs, or evaluator answers appear
+  in `starter/`. The evaluator is never modified to inflate results.
+- Catalog and sessions derive from Amazon Reviews 2023 (McAuley Lab, UCSD). See
+  [DATA_ATTRIBUTION.md](DATA_ATTRIBUTION.md) before using or redistributing.
+
+## Repository map
 
 ```text
-TechnicalScore = 0.50 × HitRate@10 + 0.30 × MRR + 0.20 × Efficiency
-Efficiency = clip((11 - MTTC) / 10, 0, 1)
+starter/          agent implementation (deterministic + optional LLM)
+scripts/          evaluation entry points (evaluate_datasets.py is the main one)
+tests/            unit + contract + adversarial tests
+docs/             architecture, API contract, implementation notes
+evaluator/        local simulator and scorer (do not modify)
+data/             catalog + session sets
 ```
 
-Only exact `parent_asin` equality produces a hit. Core metrics are also reported by scenario.
+## Team
 
-## Model Choice and Cost
-
-Teams may use any legally accessible LLM API or local model. Teams manage their own credentials and must never commit API keys. Model choice, estimated cost, token usage, and latency must be disclosed. Token usage is a feasibility metric, not part of the core technical score. The organizer does not provide or reimburse model API credits; teams are responsible for any costs incurred through optional external services.
-
-## Files
-
-```text
-data/public_set.jsonl             200 labeled development sessions
-docs/competition_specification.md participant rules and evaluation protocol
-docs/agent_api_contract.json      machine-readable Agent contract
-docs/evaluation_config.json       scoring configuration
-docs/baseline_results.json        reproducible weak-starter reference score
-starter/agent.py                  editable weak starter
-evaluator/local_evaluator.py      public-set simulator and scorer
-```
-
-## Judging and Submission Policy
-
-- Participant submission requirements: `docs/submission_rules.md`
-- Participant release checklist: `docs/participant_release_checklist.md`
-- Organizer-only final judging controls: `organizer/JUDGING_RUNBOOK.md`
-- Organizer private release checklist: `organizer/private_release_checklist.md`
-- Judging day operations SOP: `organizer/JUDGING_DAY_SOP.md`
-
-## Data Source
-
-The catalog and sessions are derived from Amazon Reviews 2023 by McAuley Lab, UCSD. See `DATA_ATTRIBUTION.md` before using or redistributing the data.
-Sessions are sampled deterministically from the official Clothing 5-core leave-last-out split and joined to the frozen catalog.
+| Member | Role / contribution |
+|---|---|
+| _TODO_ | _fill in before submission_ |
