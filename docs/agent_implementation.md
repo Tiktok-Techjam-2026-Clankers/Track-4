@@ -349,19 +349,27 @@ Gemini→OpenAI switch and were never re-measured — they are superseded here.)
 | Default public | 200 | 1.000 | 0.993333 | 2.580 | 0.8420 | **0.966400** |
 | Extended holdout | 500 | 0.998 | 0.983490 | 2.706 | 0.8294 | **0.959927** |
 
-### LLM-enabled (OpenAI `gpt-4.1-mini`, measured live on default public, 200 sessions)
+### LLM-enabled (OpenAI `gpt-4.1-mini`, intent parsing + semantic reranking)
 
-| Variant | HitRate@10 | MRR | MTTC | TechnicalScore | Tokens | Wall-clock |
-|---|---:|---:|---:|---:|---:|---:|
-| Before rerank guards | 0.980 | 0.9557 | 3.125 | 0.934214 | 1,420,224 | ~29.6 min |
-| **After gating + wide window** | 0.990 | 0.9496 | 3.075 | **0.938393** | 1,249,783 | ~22.4 min |
+Two calls per turn, with the reranker gating + wide-window guards enabled.
+Tokens = prompt + completion summed over all sessions; wall-clock is the full
+eval run.
 
-The LLM-enabled score sits **below** the deterministic baseline: the
-deterministic RRF ranker is already strongly tuned, while the reranker sees only
-product titles. The LLM pipeline is retained for its semantic-ranking capability
-and its alignment with the competition's "Multi-Route Retrieval → LLM Semantic
-Ranking" requirement; **deterministic mode is the higher-scoring, zero-cost
-default**. Extended/persona splits were only measured deterministically (cost).
+| Test set | Sessions | HitRate@10 | MRR | MTTC | Efficiency | TechnicalScore | Tokens | Wall-clock |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Default public | 200 | 0.990 | 0.949643 | 3.075 | 0.7925 | **0.938393** | 1,249,783 | ~22.4 min |
+| Extended holdout | 500 | _measuring — run in progress_ | | | | | | |
+
+The gating + wide-window guards cut ~170k tokens versus the ungated pipeline
+and lifted the default-public score from 0.934214.
+
+**LLM mode is the default** (it runs whenever a key is present) and satisfies
+the competition's "Multi-Route Retrieval → LLM Semantic Ranking" requirement.
+Note the trade-off, though: its score sits **below** the deterministic
+fallback, because the deterministic RRF ranker is already strongly tuned while
+the reranker sees only product titles. So the automatic no-key fallback is not
+just a safety net — it is currently the higher-scoring, zero-cost path.
+Extended/persona splits were only measured deterministically (cost).
 
 ```text
 Efficiency     = clip((11 − MTTC) / 10, 0, 1)
@@ -374,14 +382,33 @@ Python 3.10+.
 
 ```bash
 python -m pip install -r requirements.txt
+```
 
-# Deterministic (no key): fully offline, reproducible
+**The mode is chosen automatically by the presence of a key — not by which
+command you run.** At startup the agent calls `load_api_key()`, which looks for
+`OPENAI_API_KEY` in the environment and then in a `.env` file:
+
+- **Key found → LLM mode (the default).** The OpenAI intent parser and the
+  semantic reranker are created and used on every turn.
+- **No key → deterministic fallback.** The agent runs fully offline with zero
+  network calls and zero token cost. This is *not* something you select; it is
+  what happens when there is nothing to authenticate with.
+
+So the normal/default workflow is: put your key in `.env`, then run **any** of
+the commands below — they will all use the LLM. Remove or omit the key and the
+exact same commands run deterministically.
+
+```bash
+# Put your key in .env at the project root (auto-read; never exported to prompts):
+#   OPENAI_API_KEY=sk-...
+
+# Official evaluator — uses LLM if a key is present, else deterministic
 python -m evaluator.local_evaluator --catalog data/catalog.jsonl --output results.json
 
-# LLM-enabled: put OPENAI_API_KEY in .env (auto-read); never exported to prompts
+# Score against the default + extended datasets (same auto-detection)
 python scripts/evaluate_datasets.py
 
-# Tests
+# Tests (all LLM calls are mocked — no key or network needed)
 python -m pytest tests/ -q
 ```
 
