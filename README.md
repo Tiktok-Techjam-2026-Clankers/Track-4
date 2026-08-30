@@ -42,6 +42,27 @@ runtime. No sample IDs or target labels are embedded anywhere in `starter/`.
 > will land somewhere between it and the deterministic score. Only the
 > deterministic rows reproduce exactly.
 
+### Cost, tokens & latency
+
+Token usage is a feasibility metric, not part of the TechnicalScore.
+
+| Mode | Dataset | Tokens (prompt / completion) | Est. cost¹ | Wall-clock | Per session |
+|---|---|---|---:|---:|---:|
+| Deterministic | Public + Extended (700) | 0 / 0 | **$0.00** | ~191 s total (~39 s one-time index build) | ~0.22 s |
+| LLM (gpt-4.1-mini) | Public (200) | 1,249,783 total | ~$0.73 | ~22.4 min | ~6.7 s |
+| LLM (gpt-4.1-mini) | Extended (500) | 1,101,929 / 201,125 | ~$0.76 | ~73.6 min² | ~8.8 s² |
+
+¹ Estimated at gpt-4.1-mini list pricing (≈ $0.40 / 1M input, ≈ $1.60 / 1M
+output) — **verify current rates**; treat as order-of-magnitude (~$0.002–0.004
+per session).
+² Extended LLM wall-clock and per-session time are inflated by 7 Agent rebuilds
+(each reloads the catalog) used to force full LLM coverage past the fallback
+latch; pure eval time is lower.
+
+The **deterministic path costs nothing and needs no network** — it is the
+default scored path. The LLM layer is an optional enhancement whose feasibility
+cost is disclosed above.
+
 > The deterministic pipeline outscores the LLM pipeline on both sets — the RRF
 > ranker is already strongly tuned and the reranker only sees product titles. The
 > LLM layer is retained for its semantic-parsing capability and graceful
