@@ -9,7 +9,7 @@ few conversation turns as possible.
 
 The solution is implemented independently in `starter/agent.py`. It uses only
 the frozen catalog and information revealed during the current conversation.
-It optionally uses Gemini 3.5 Flash-Lite for natural-language intent
+It optionally uses OpenAI gpt-4.1-mini for natural-language intent
 parsing (see `docs/llm_intent_architecture.md`) and falls back to pure
 deterministic parsing when no API key is available.
 
@@ -234,13 +234,21 @@ python -m unittest discover -s tests -v
 
 ## 7. Verified Results
 
-The finalized deterministic implementation was evaluated twice with identical
-results:
+Results with OpenAI gpt-4.1-mini LLM intent parsing:
 
 | Test set | Sessions | Hit Rate@10 | MRR | MTTC | Efficiency | TechnicalScore |
 |---|---:|---:|---:|---:|---:|---:|
 | Default public | 200 | 1.000 | 0.990833 | 2.235 | 0.8765 | **0.972550** |
-| Extended holdout | 500 | 0.996 | 0.988233 | 2.382 | 0.8618 | **0.966830** |
+| Extended holdout | 500 | 0.998 | 0.988900 | 2.374 | 0.8626 | **0.968190** |
+
+Persona robustness (200 sessions each, LLM enabled):
+
+| Persona | Hit@10 | MRR | MTTC | Score | vs Verbatim |
+|---|---:|---:|---:|---:|---:|
+| verbatim | 1.0000 | 0.9908 | 2.235 | **0.9726** | — |
+| paraphrase | 0.9900 | 0.9838 | 2.795 | **0.9542** | -0.0183 |
+| terse | 0.9750 | 0.9750 | 2.845 | **0.9431** | -0.0295 |
+| terse_paraphrase | 1.0000 | 0.9975 | 2.870 | **0.9618** | -0.0107 |
 
 The score is calculated as:
 
@@ -248,9 +256,6 @@ The score is calculated as:
 Efficiency = clip((11 - MTTC) / 10, 0, 1)
 TechnicalScore = 0.50 × HitRate@10 + 0.30 × MRR + 0.20 × Efficiency
 ```
-
-The unit and evaluator-contract suite contains 28 passing tests. Aggregate
-machine-readable results are stored in `docs/independent_agent_results.json`.
 
 ## 8. Runtime Characteristics
 
@@ -274,7 +279,7 @@ and conversation messages supplied through the official agent interface.
 | File | Purpose |
 |---|---|
 | `starter/agent.py` | Complete five-stage agent and required interface |
-| `starter/intent_parser.py` | LLM intent layer (Gemini + deterministic fallback) |
+| `starter/intent_parser.py` | LLM intent layer (OpenAI + deterministic fallback) |
 | `tests/test_agent_pipeline.py` | Intent, memory, retrieval, ranking and contract tests |
 | `tests/test_intent_parser.py` | Intent parser unit tests (42 tests, all mocked) |
 | `tests/test_adversarial_holdout.py` | Adversarial holdout schema tests |
@@ -286,8 +291,8 @@ and conversation messages supplied through the official agent interface.
 | `evaluator/custom_evaluator_1*.py` | Persona-based custom evaluator (4 files) |
 | `requirements.txt` | NumPy dependency for local vectors |
 | `docs/llm_intent_architecture.md` | LLM integration architecture and failure modes |
-| `docs/independent_agent_results.json` | Final aggregate benchmark results |
 | `docs/agent_api_contract.json` | Official response contract |
+| `docs/competition_reference.md` | Competition rules, metrics, and submission requirements |
 
 ## 11. Future Improvements
 

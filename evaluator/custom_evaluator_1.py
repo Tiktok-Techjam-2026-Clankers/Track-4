@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 
@@ -101,7 +102,9 @@ def main() -> None:
 
     samples = stratified_sample(load_jsonl(args.dataset), args.limit)
     catalog_ids, categories, products = catalog_index(args.catalog)
+    t0 = time.perf_counter()
     shared = build_agent(args.catalog) if args.shared_agent else None
+    startup = time.perf_counter() - t0
 
     results: dict[str, dict] = {}
     for name in args.personas:
@@ -124,9 +127,16 @@ def main() -> None:
             if control and name != CONTROL_PERSONA
         },
     }
+    elapsed = time.perf_counter() - t0
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 
-    print(f"Dataset: {report['dataset']}  ({len(samples)} sessions per persona)")
+    prompt_tokens = sum(r.get("reported_token_usage", {}).get("prompt_tokens", 0) for r in results.values())
+    completion_tokens = sum(r.get("reported_token_usage", {}).get("completion_tokens", 0) for r in results.values())
+
+    print("Evaluator: evaluate-personas")
+    print("=" * 65)
+    print(f"\nDataset: {report['dataset']}  ({len(samples)} sessions per persona)")
+    print()
     print(format_table(results))
     for name, result in results.items():
         if result["contract_violations"]:
@@ -135,6 +145,10 @@ def main() -> None:
         for name, result in results.items():
             if "timings_ms" in result:
                 print(f"latency ms [{name}]: {json.dumps(result['timings_ms'])}")
+    total_tokens = prompt_tokens + completion_tokens
+    print()
+    print(f"Tokens: {prompt_tokens:,} prompt · {completion_tokens:,} completion · {total_tokens:,} total")
+    print(f"Time:   {elapsed:.1f}s (startup {startup:.1f}s)")
     print(f"\nReport written to {args.output}")
 
 

@@ -157,6 +157,8 @@ def _metric(sessions: list[dict]) -> dict:
 def evaluate(agent: Agent, cases: list[dict], catalog_ids: set[str]) -> dict:
     sessions = []
     grouped: dict[str, list[dict]] = defaultdict(list)
+    prompt_tokens = 0
+    completion_tokens = 0
     for case_index, case in enumerate(cases):
         session_id = f"robust_{case_index:05d}"
         agent.reset(session_id, case["user_profile"])
@@ -169,6 +171,10 @@ def evaluate(agent: Agent, cases: list[dict], catalog_ids: set[str]) -> dict:
                    "hit": False, "turn": None, "rank": None, "reciprocal_rank": 0.0}
         for turn in range(1, MAX_TURNS + 1):
             response = agent.respond(session_id, message, turn, TOP_K)
+            usage = response.get("usage") if isinstance(response, dict) else None
+            if isinstance(usage, dict):
+                prompt_tokens += max(0, int(usage.get("prompt_tokens", 0)))
+                completion_tokens += max(0, int(usage.get("completion_tokens", 0)))
             ranked = []
             for item in response.get("recommendations", []) if isinstance(response, dict) else []:
                 asin = str(item.get("parent_asin", "")) if isinstance(item, dict) else ""
@@ -199,8 +205,27 @@ def evaluate(agent: Agent, cases: list[dict], catalog_ids: set[str]) -> dict:
     overall["scenario_metrics"] = {
         name: _metric(values) for name, values in sorted(grouped.items())
     }
+    overall["reported_token_usage"] = {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
     overall["sessions"] = sessions
     return overall
+
+
+HEADERS = ("split", "n", "Hit@10", "MRR", "MTTC", "Eff", "Score")
+WIDTHS = (16, 5, 8, 8, 8, 8, 8)
+METRIC_KEYS = ("hit_rate_at_10", "mrr", "mttc", "efficiency", "technical_score")
+
+
+def format_row(label: str, result: dict) -> str:
+    cells = [
+        label,
+        str(result["sample_count"]),
+        *(f"{float(result[k]):.4f}" for k in METRIC_KEYS),
+    ]
+    return "  ".join(c.rjust(w) for c, w in zip(cells, WIDTHS))
 
 
 def main() -> None:
@@ -217,17 +242,32 @@ def main() -> None:
     catalog_ids = {
         str(row["parent_asin"]) for row in _load(catalog_path)
     }
-    started = time.perf_counter()
+    t0 = time.perf_counter()
     agent = Agent(catalog_path)
-    startup = time.perf_counter() - started
+    startup = time.perf_counter() - t0
     result = evaluate(agent, _load(Path(args.cases_dir) / f"{args.split}.jsonl"), catalog_ids)
+    elapsed = time.perf_counter() - t0
     result["startup_seconds"] = round(startup, 6)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / f"{args.split}.json").write_text(
         json.dumps(result, indent=2) + "\n", encoding="utf-8"
     )
-    print(json.dumps({key: value for key, value in result.items() if key != "sessions"}, indent=2))
+
+    print("Evaluator: evaluate-robust")
+    print("=" * 65)
+    print()
+    print("  ".join(h.rjust(w) for h, w in zip(HEADERS, WIDTHS)))
+    print("  ".join("-" * w for w in WIDTHS))
+    print(format_row(args.split, result))
+    for scenario, metrics in sorted(result.get("scenario_metrics", {}).items()):
+        print(format_row(f"  {scenario}", metrics))
+    usage = result.get("reported_token_usage", {})
+    pt = usage.get("prompt_tokens", 0)
+    ct = usage.get("completion_tokens", 0)
+    print()
+    print(f"Tokens: {pt:,} prompt · {ct:,} completion · {pt + ct:,} total")
+    print(f"Time:   {elapsed:.1f}s (startup {startup:.1f}s)")
 
 
 if __name__ == "__main__":

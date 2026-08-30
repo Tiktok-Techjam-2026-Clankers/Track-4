@@ -104,14 +104,14 @@ is printed to stdout.
 
 ## Current robustness results
 
-Two byte-identical runs on the 200 public sessions produced:
+200 public sessions with OpenAI gpt-4.1-mini LLM intent parsing:
 
 | Persona | Hit@10 | MRR | MTTC | Efficiency | TechnicalScore |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `verbatim` | 1.000 | 0.990833 | 2.235 | 0.8765 | **0.972550** |
-| `paraphrase` | 1.000 | 0.992381 | 2.775 | 0.8225 | **0.962214** |
-| `terse` | 0.995 | 0.991667 | 2.695 | 0.8305 | **0.961100** |
-| `terse_paraphrase` | 1.000 | 0.994167 | 2.875 | 0.8125 | **0.960750** |
+| `verbatim` | 1.000 | 0.9908 | 2.235 | 0.8765 | **0.9726** |
+| `paraphrase` | 0.990 | 0.9838 | 2.795 | 0.8205 | **0.9542** |
+| `terse` | 0.975 | 0.9750 | 2.845 | 0.8155 | **0.9431** |
+| `terse_paraphrase` | 1.000 | 0.9975 | 2.870 | 0.8130 | **0.9618** |
 
 ## Scope
 
