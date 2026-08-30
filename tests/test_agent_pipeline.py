@@ -238,5 +238,143 @@ class AgentContractTest(unittest.TestCase):
         })
 
 
+class ComputeWeightsTest(unittest.TestCase):
+    def test_default_buying_weights(self) -> None:
+        weights, k = HybridRanker.compute_weights("buying")
+        self.assertEqual(weights, (0.25, 0.10, 0.50, 0.40))
+        self.assertEqual(k, 20)
+
+    def test_late_turn_boosts_evidence(self) -> None:
+        weights, _ = HybridRanker.compute_weights("buying", turn=6)
+        base = HybridRanker.WEIGHTS["buying"]
+        self.assertGreater(weights[2], base[2])
+        self.assertLess(weights[0], base[0])
+
+    def test_many_constraints_shrinks_k(self) -> None:
+        _, k = HybridRanker.compute_weights("buying", constraint_count=4)
+        self.assertLess(k, HybridRanker.FUSION_K["buying"])
+
+    def test_post_override_boosts_semantic(self) -> None:
+        weights, _ = HybridRanker.compute_weights(
+            "override", is_post_override=True, phase_turn=1,
+        )
+        base = HybridRanker.WEIGHTS["override"]
+        self.assertGreater(weights[1], base[1])
+
+    def test_preference_tags_boost_semantic(self) -> None:
+        weights, _ = HybridRanker.compute_weights("browsing", has_preference_tags=True)
+        base = HybridRanker.WEIGHTS["browsing"]
+        self.assertGreater(weights[1], base[1])
+
+    def test_weights_clamped_to_valid_range(self) -> None:
+        weights, k = HybridRanker.compute_weights(
+            "buying", turn=8, constraint_count=10,
+            is_post_override=True, phase_turn=1, has_preference_tags=True,
+        )
+        for w in weights:
+            self.assertGreaterEqual(w, 0.05)
+            self.assertLessEqual(w, 1.0)
+        self.assertGreaterEqual(k, 5)
+
+    def test_unknown_intent_uses_browsing(self) -> None:
+        weights, _ = HybridRanker.compute_weights("nonexistent")
+        base = HybridRanker.WEIGHTS["browsing"]
+        self.assertEqual(weights, base)
+
+
+class FuseWithDynamicWeightsTest(unittest.TestCase):
+    def test_fuse_accepts_explicit_weights_and_k(self) -> None:
+        result = HybridRanker.fuse(
+            ["a", "b"], ["b", "a"], ["a"], ["b"],
+            "buying", 3,
+            weights=(1.0, 0.05, 0.05, 0.05), fusion_k=10,
+        )
+        self.assertEqual(result[0][0], "a")
+
+    def test_fuse_none_weights_uses_defaults(self) -> None:
+        result = HybridRanker.fuse(
+            ["a", "b"], ["b", "a"], ["a"], ["b"],
+            "buying", 3,
+            weights=None, fusion_k=None,
+        )
+        self.assertEqual(len(result), 2)
+
+
+class LLMRerankerTest(unittest.TestCase):
+    def test_apply_order_remaps_correctly(self) -> None:
+        from starter.agent import LLMReranker
+        head = [("A", 1.0), ("B", 0.9), ("C", 0.8)]
+        tail = [("D", 0.5)]
+        result = LLMReranker._apply_order([3, 1, 2], head, tail)
+        self.assertEqual([r[0] for r in result], ["C", "A", "B", "D"])
+
+    def test_apply_order_appends_missing_indices(self) -> None:
+        from starter.agent import LLMReranker
+        head = [("A", 1.0), ("B", 0.9), ("C", 0.8)]
+        result = LLMReranker._apply_order([2], head, [])
+        self.assertEqual([r[0] for r in result], ["B", "A", "C"])
+
+    def test_apply_order_ignores_out_of_range(self) -> None:
+        from starter.agent import LLMReranker
+        head = [("A", 1.0), ("B", 0.9)]
+        result = LLMReranker._apply_order([99, 1], head, [])
+        self.assertEqual([r[0] for r in result], ["A", "B"])
+
+    def test_rerank_returns_original_on_single_item(self) -> None:
+        from starter.agent import LLMReranker
+        reranker = LLMReranker("key", {"A": "shoes"})
+        result, pt, ct = reranker.rerank([("A", 1.0)], "shoes", {})
+        self.assertEqual(result, [("A", 1.0)])
+        self.assertEqual(pt, 0)
+
+    @patch("starter.agent.call_openai")
+    def test_rerank_reorders_on_success(self, mock_call) -> None:
+        from starter.agent import LLMReranker
+        mock_call.return_value = ({"order": [2, 1]}, 50, 20)
+        reranker = LLMReranker("key", {"A": "red shoes", "B": "blue shoes"})
+        result, pt, ct = reranker.rerank(
+            [("A", 1.0), ("B", 0.9)], "blue shoes", {},
+        )
+        self.assertEqual(result[0][0], "B")
+        self.assertEqual(pt, 50)
+
+    @patch("starter.agent.call_openai")
+    def test_rerank_falls_back_on_api_failure(self, mock_call) -> None:
+        from starter.agent import LLMReranker
+        mock_call.return_value = (None, 0, 0)
+        reranker = LLMReranker("key", {"A": "shoes", "B": "boots"})
+        original = [("A", 1.0), ("B", 0.9)]
+        result, _, _ = reranker.rerank(original, "shoes", {})
+        self.assertEqual(result, original)
+
+
+class ChooseQuestionTest(unittest.TestCase):
+    def test_llm_suggestion_takes_priority(self) -> None:
+        memory = ConversationMemory({})
+        memory.suggested_question = "material"
+        attribute = memory.choose_question()
+        self.assertEqual(attribute, "material")
+
+    def test_llm_suggestion_skipped_if_declined(self) -> None:
+        memory = ConversationMemory({})
+        memory.suggested_question = "color"
+        memory.declined_attributes.add("color")
+        attribute = memory.choose_question()
+        self.assertEqual(attribute, "other")
+
+    def test_llm_suggestion_skipped_if_already_asked(self) -> None:
+        memory = ConversationMemory({})
+        memory.suggested_question = "style"
+        memory.asked_counts["style"] = 1
+        attribute = memory.choose_question()
+        self.assertEqual(attribute, "other")
+
+    def test_falls_back_to_sequence_after_open_limit(self) -> None:
+        memory = ConversationMemory({})
+        memory.asked_counts["other"] = 3
+        attribute = memory.choose_question()
+        self.assertNotEqual(attribute, "other")
+
+
 if __name__ == "__main__":
     unittest.main()

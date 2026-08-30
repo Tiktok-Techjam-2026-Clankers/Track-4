@@ -26,6 +26,12 @@ VALID_OPERATIONS = frozenset({"add", "replace", "remove", "none"})
 LLM_CONFIDENCE_THRESHOLD = 0.5
 
 
+VALID_QUESTION_ATTRIBUTES = frozenset({
+    "category", "material", "color", "size", "style",
+    "brand", "budget", "feature", "use_case", "other",
+})
+
+
 @dataclass
 class IntentResult:
     """Structured output from any intent parser."""
@@ -43,6 +49,7 @@ class IntentResult:
     source: str = "deterministic"
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    suggested_question: str | None = None
 
 
 def validate_intent_result(data: object) -> IntentResult | None:
@@ -91,6 +98,12 @@ def validate_intent_result(data: object) -> IntentResult | None:
     except (TypeError, ValueError):
         confidence = 0.0
 
+    suggested_question = data.get("suggested_question")
+    if suggested_question is not None:
+        suggested_question = str(suggested_question).strip().lower()
+        if suggested_question not in VALID_QUESTION_ATTRIBUTES:
+            suggested_question = None
+
     return IntentResult(
         mode=mode,
         operation=operation,
@@ -103,6 +116,7 @@ def validate_intent_result(data: object) -> IntentResult | None:
         reference_description=ref_desc,
         confidence=confidence,
         source="llm",
+        suggested_question=suggested_question,
     )
 
 
@@ -153,6 +167,69 @@ class DeterministicIntentParser(IntentParser):
 
 _OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions"
 
+
+def call_openai(
+    api_key: str,
+    system_prompt: str,
+    user_message: str,
+    model: str = "gpt-4.1-mini",
+    timeout: float = 5.0,
+    max_tokens: int = 256,
+) -> tuple[dict | None, int, int]:
+    """Shared OpenAI chat completions call. Returns (parsed_json, prompt_tokens, completion_tokens)."""
+    body = json.dumps({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+        "temperature": 0,
+        "max_tokens": max_tokens,
+        "response_format": {"type": "json_object"},
+    }).encode("utf-8")
+
+    request = urllib.request.Request(
+        _OPENAI_ENDPOINT,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        method="POST",
+    )
+
+    try:
+        ctx = ssl.create_default_context()
+        with urllib.request.urlopen(
+            request, timeout=timeout, context=ctx
+        ) as resp:
+            raw = json.loads(resp.read())
+    except (
+        urllib.error.URLError,
+        urllib.error.HTTPError,
+        json.JSONDecodeError,
+        TimeoutError,
+        OSError,
+    ):
+        return None, 0, 0
+
+    usage = raw.get("usage") or {}
+    prompt_tokens = int(usage.get("prompt_tokens", 0))
+    completion_tokens = int(usage.get("completion_tokens", 0))
+
+    choices = raw.get("choices") or []
+    if not choices:
+        return None, prompt_tokens, completion_tokens
+
+    text = (choices[0].get("message") or {}).get("content", "")
+    if not text:
+        return None, prompt_tokens, completion_tokens
+
+    try:
+        return json.loads(text), prompt_tokens, completion_tokens
+    except json.JSONDecodeError:
+        return None, prompt_tokens, completion_tokens
+
 _SYSTEM_PROMPT = """\
 You are a shopping intent parser. Parse the customer message into structured JSON.
 
@@ -161,6 +238,8 @@ Shopping context:
 - Turn: {turn}
 - Session mode: {session_mode}
 - Last question asked: {last_question}
+- User profile: {user_summary}
+- Preference tags: {preference_tags}
 
 Return this exact JSON structure:
 {{
@@ -173,7 +252,8 @@ Return this exact JSON structure:
   "no_preference": ["attributes the customer has no preference for"],
   "referenced_previous_item": true or false,
   "reference_description": "what they reference" or null,
-  "confidence": 0.0 to 1.0
+  "confidence": 0.0 to 1.0,
+  "suggested_question": "material" or "color" or "style" or "use_case" or "feature" or "budget" or "brand" or "size" or "category" or "other" or null
 }}
 
 Intent rules:
@@ -182,7 +262,8 @@ Intent rules:
 - browsing = exploring with no firm requirements
 - negative_constraints = explicit exclusions ("anything except X", "not Y", "no Z")
 - no_preference = explicit indifference ("don't care about color", "not fussed", "doesn't matter")
-- confidence = how clearly the intent is expressed (0.0 = very unclear, 1.0 = crystal clear)"""
+- confidence = how clearly the intent is expressed (0.0 = very unclear, 1.0 = crystal clear)
+- suggested_question = the most useful attribute to ask about next given the conversation so far (null if unclear)"""
 
 
 class OpenAIIntentParser(IntentParser):
@@ -202,11 +283,14 @@ class OpenAIIntentParser(IntentParser):
         self._cache_size = cache_size
 
     def parse(self, message: str, conversation_state: dict) -> IntentResult:
+        tags = conversation_state.get("preference_tags") or []
         system_prompt = _SYSTEM_PROMPT.format(
             active_query=conversation_state.get("active_query") or "none",
             turn=conversation_state.get("turn", 1),
             session_mode=conversation_state.get("session_mode", "browsing"),
             last_question=conversation_state.get("last_question") or "none",
+            user_summary=conversation_state.get("user_summary") or "none",
+            preference_tags=", ".join(tags) if tags else "none",
         )
 
         cache_key = hashlib.sha256(
@@ -238,58 +322,10 @@ class OpenAIIntentParser(IntentParser):
     def _call_api(
         self, system_prompt: str, user_message: str
     ) -> tuple[dict | None, int, int]:
-        body = json.dumps({
-            "model": self._model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            "temperature": 0,
-            "max_tokens": 256,
-            "response_format": {"type": "json_object"},
-        }).encode("utf-8")
-
-        request = urllib.request.Request(
-            _OPENAI_ENDPOINT,
-            data=body,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self._api_key}",
-            },
-            method="POST",
+        return call_openai(
+            self._api_key, system_prompt, user_message,
+            model=self._model, timeout=self._timeout,
         )
-
-        try:
-            ctx = ssl.create_default_context()
-            with urllib.request.urlopen(
-                request, timeout=self._timeout, context=ctx
-            ) as resp:
-                raw = json.loads(resp.read())
-        except (
-            urllib.error.URLError,
-            urllib.error.HTTPError,
-            json.JSONDecodeError,
-            TimeoutError,
-            OSError,
-        ):
-            return None, 0, 0
-
-        usage = raw.get("usage") or {}
-        prompt_tokens = int(usage.get("prompt_tokens", 0))
-        completion_tokens = int(usage.get("completion_tokens", 0))
-
-        choices = raw.get("choices") or []
-        if not choices:
-            return None, prompt_tokens, completion_tokens
-
-        text = (choices[0].get("message") or {}).get("content", "")
-        if not text:
-            return None, prompt_tokens, completion_tokens
-
-        try:
-            return json.loads(text), prompt_tokens, completion_tokens
-        except json.JSONDecodeError:
-            return None, prompt_tokens, completion_tokens
 
 
 class HybridIntentParser(IntentParser):

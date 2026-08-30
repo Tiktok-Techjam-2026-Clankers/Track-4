@@ -380,6 +380,70 @@ class SessionIsolationTest(unittest.TestCase):
         self.assertEqual(len(parser_b._cache), 0)
 
 
+class SuggestedQuestionTest(unittest.TestCase):
+    def test_valid_suggested_question_preserved(self) -> None:
+        result = validate_intent_result({
+            "mode": "buying", "operation": "add", "confidence": 0.9,
+            "suggested_question": "material",
+        })
+        assert result is not None
+        self.assertEqual(result.suggested_question, "material")
+
+    def test_invalid_suggested_question_becomes_none(self) -> None:
+        result = validate_intent_result({
+            "mode": "buying", "operation": "add", "confidence": 0.9,
+            "suggested_question": "weight",
+        })
+        assert result is not None
+        self.assertIsNone(result.suggested_question)
+
+    def test_null_suggested_question(self) -> None:
+        result = validate_intent_result({
+            "mode": "buying", "operation": "add", "confidence": 0.9,
+            "suggested_question": None,
+        })
+        assert result is not None
+        self.assertIsNone(result.suggested_question)
+
+    def test_missing_suggested_question_defaults_to_none(self) -> None:
+        result = validate_intent_result({
+            "mode": "buying", "operation": "add", "confidence": 0.9,
+        })
+        assert result is not None
+        self.assertIsNone(result.suggested_question)
+
+    @patch("starter.intent_parser.urllib.request.urlopen")
+    def test_llm_returns_suggested_question(self, mock_urlopen) -> None:
+        mock_urlopen.return_value = _mock_urlopen(_openai_response({
+            "mode": "buying", "operation": "add", "confidence": 0.9,
+            "suggested_question": "color",
+        }))
+        parser = OpenAIIntentParser(api_key="test-key", timeout=2.0)
+        result = parser.parse("cotton shoes", {"active_query": "", "turn": 1})
+        self.assertEqual(result.suggested_question, "color")
+
+
+class CallOpenAITest(unittest.TestCase):
+    @patch("starter.intent_parser.urllib.request.urlopen")
+    def test_shared_helper_returns_parsed_json(self, mock_urlopen) -> None:
+        from starter.intent_parser import call_openai
+        mock_urlopen.return_value = _mock_urlopen(_openai_response({
+            "order": [2, 1, 3],
+        }))
+        parsed, pt, ct = call_openai("key", "system", "user", max_tokens=128)
+        self.assertEqual(parsed, {"order": [2, 1, 3]})
+        self.assertEqual(pt, 10)
+        self.assertEqual(ct, 5)
+
+    @patch("starter.intent_parser.urllib.request.urlopen")
+    def test_shared_helper_returns_none_on_error(self, mock_urlopen) -> None:
+        from starter.intent_parser import call_openai
+        mock_urlopen.side_effect = TimeoutError("timed out")
+        parsed, pt, ct = call_openai("key", "system", "user")
+        self.assertIsNone(parsed)
+        self.assertEqual(pt, 0)
+
+
 class LoadApiKeyTest(unittest.TestCase):
     @patch.dict("os.environ", {"OPENAI_API_KEY": "env-key-123"}, clear=False)
     def test_reads_from_environment(self) -> None:

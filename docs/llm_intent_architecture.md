@@ -2,28 +2,40 @@
 
 ## Overview
 
-The shopping copilot uses an LLM-first intent-classification pipeline:
+The shopping copilot uses a two-stage LLM pipeline — intent parsing and
+semantic reranking — with full deterministic fallback:
 
 ```
-User message + compact conversation state
+User message + compact conversation state + user profile
         ↓
 OpenAIIntentParser (gpt-4.1-mini, structured JSON)
+  → extracts: mode, constraints, confidence, suggested_question
         ↓  fail → DeterministicIntentParser (fallback)
         ↓
 Schema validation
         ↓
 Deterministic state reconciliation
         ↓
-Existing BM25 + semantic retrieval + structured filters
+Dynamic RRF weight computation (turn, constraints, override, tags)
         ↓
-Existing deterministic ranking (with negative constraint penalty)
+BM25 + semantic + structured + intent-card retrieval
+  (turn-1: preference tags appended as soft retrieval signals)
+        ↓
+Intent-aware RRF fusion (dynamic weights + adaptive fusion_k)
+        ↓
+LLMReranker (gpt-4.1-mini, top-20 by title)
+  → reorders candidates by semantic relevance
+        ↓  fail → keep original RRF ordering
+        ↓
+Post-fusion overrides, ladder policy
         ↓
 Top-10 response
 ```
 
 All messages go through the LLM — there is no template detection bypass.
 The deterministic fallback only activates when the LLM is unavailable or
-returns low confidence.
+returns low confidence. Both LLM calls share a common `call_openai()` helper
+with SHA-256 prompt caching.
 
 ## Components
 
@@ -36,6 +48,14 @@ returns low confidence.
 | `DeterministicIntentParser` | Minimal fallback — always returns "browsing" |
 | `OpenAIIntentParser` | Calls OpenAI API, validates response, caches results |
 | `HybridIntentParser` | LLM-first → deterministic fallback |
+
+### `starter/agent.py` (LLM components)
+
+| Class / Function | Role |
+|---|---|
+| `call_openai()` | Shared OpenAI chat completions helper (used by both parser and reranker) |
+| `LLMReranker` | Reranks top-20 fused candidates via LLM, falls back to original order |
+| `HybridRanker.compute_weights()` | Dynamic RRF weight computation from session state |
 
 ### Schema
 
@@ -50,7 +70,8 @@ returns low confidence.
   "no_preference": ["attributes without preference"],
   "referenced_previous_item": true/false,
   "reference_description": "string or null",
-  "confidence": 0.0-1.0
+  "confidence": 0.0-1.0,
+  "suggested_question": "material | color | style | ... | other | null"
 }
 
 ```
@@ -102,49 +123,65 @@ Each response includes cumulative session token usage:
 
 - When the LLM is disabled (no key), both fields are 0.
 - Token counts come from OpenAI's `usage` response field.
-- Counts accumulate per session across all turns.
+- Counts accumulate per session across all turns from both LLM calls (intent + reranker).
 - The evaluator sums these across sessions for the final report.
+- Typical per-turn cost: ~200 prompt + ~50 completion (intent) + ~200 prompt + ~50 completion (rerank).
+
+## Failure Behaviour — LLM Reranker
+
+| Failure | Result |
+|---|---|
+| `OPENAI_API_KEY` not set | Reranker not created; RRF ordering used as-is |
+| API call times out (3 s default) | Original RRF ranking preserved |
+| LLM returns invalid JSON or missing `order` key | Original RRF ranking preserved |
+| LLM returns out-of-range indices | Missing items appended in original order |
+| Single candidate or empty list | Returned unchanged (no API call made) |
 
 ## Privacy
 
 - The API key is read from `os.environ` or `.env` — never logged, printed,
   or included in prompts.
-- The OpenAI prompt receives only the current message plus a compact
+- The **intent parser** prompt receives the current message plus a compact
   summary of the conversation state (active query, turn number, session
-  mode, last question). It never receives the full transcript, product
-  catalogue, or product IDs.
+  mode, last question, user profile summary, preference tags). It never
+  receives the full transcript, product catalogue, or product IDs.
+- The **reranker** prompt receives numbered product titles (truncated to
+  120 chars) plus the query and user profile. It never receives ASINs or
+  internal identifiers.
 - The LLM cannot inject product IDs — all IDs come from the deterministic
   retrieval pipeline.
 
 ## Deterministic Scores (no LLM)
 
-Verified on `di-heng-3` with `OPENAI_API_KEY` unset:
+Re-measured on the current OpenAI codebase with `OPENAI_API_KEY` unset. (Earlier
+revisions quoted 0.9726/0.9668 and custom-persona rows; those predate the
+Gemini→OpenAI switch and were never re-measured — superseded here.)
 
-| Dataset | Score |
-|---|---|
-| Official public | 0.972550 |
-| Official extended | 0.966830 |
-| Custom verbatim | 0.972550 |
-| Custom paraphrase | 0.962214 |
-| Custom terse | 0.961100 |
-| Custom terse_paraphrase | 0.960750 |
+| Dataset | Hit@10 | MRR | MTTC | Score |
+|---|---|---|---|---|
+| Official public (200) | 1.000 | 0.993333 | 2.580 | 0.966400 |
+| Official extended (500) | 0.998 | 0.983490 | 2.706 | 0.959927 |
 
-Two consecutive runs produce byte-identical results.
+Two consecutive runs produce byte-identical results. The custom persona splits
+have not yet been re-measured on the OpenAI codebase and are omitted rather than
+quoted stale.
 
-## LLM Scores (OpenAI gpt-4.1-mini)
+## LLM Scores (OpenAI gpt-4.1-mini, intent parsing + semantic reranking)
 
-### Standard evaluation
+Measured live on the default public set (200 sessions), two LLM calls per turn,
+with the reranker gating + wide-window guards enabled:
 
-| Dataset | Hit@10 | MRR | MTTC | Score | Delta |
+| Dataset | Hit@10 | MRR | MTTC | Score | vs Deterministic |
 |---|---|---|---|---|---|
-| Default public (200) | 1.0000 | 0.9908 | 2.235 | 0.9726 | 0.0000 |
-| Extended (500) | 0.9980 | 0.9889 | 2.374 | 0.9682 | +0.0014 |
+| Default public (200) | 0.990 | 0.9496 | 3.075 | 0.938393 | -0.028 |
 
-### Persona evaluation (200 sessions each)
+Run cost: ~22.4 min wall-clock, 1,249,783 tokens (1,066,281 prompt +
+183,502 completion). The two guards cut ~170k tokens and lifted the score from
+an ungated 0.934214.
 
-| Persona | Hit@10 | MRR | MTTC | Score | vs Verbatim |
-|---|---|---|---|---|---|
-| verbatim | 1.0000 | 0.9908 | 2.235 | 0.9726 | — |
-| paraphrase | 0.9900 | 0.9838 | 2.795 | 0.9542 | -0.0183 |
-| terse | 0.9750 | 0.9750 | 2.845 | 0.9431 | -0.0295 |
-| terse_paraphrase | 1.0000 | 0.9975 | 2.870 | 0.9618 | -0.0107 |
+The LLM-enabled score sits below the deterministic 0.966400 baseline: the
+deterministic RRF ranker is already strongly tuned, and the reranker sees only
+product titles. The full LLM pipeline is retained for its semantic-ranking
+capability; deterministic mode is the higher-scoring, zero-cost fallback.
+Extended (500) and persona splits have only been measured in deterministic
+mode (see above) — the LLM pipeline was not re-run on them due to cost.
