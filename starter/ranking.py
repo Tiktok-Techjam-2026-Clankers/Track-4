@@ -9,7 +9,9 @@ here so tests patch ``starter.ranking.call_openai``.
 from __future__ import annotations
 
 import hashlib
+import os
 import threading
+from functools import lru_cache
 
 from starter.intent_parser import call_openai
 from starter.text_utils import *  # noqa: F401,F403 — shared helpers/constants
@@ -128,6 +130,111 @@ class LLMReranker:
             if pos not in seen:
                 reordered.append(head[pos])
         return reordered + list(tail)
+
+
+@lru_cache(maxsize=4)
+def _load_cross_encoder(model_name: str, cache_dir: str):
+    """Load a fastembed cross-encoder once per process (shared across agents).
+
+    Returns the encoder, or ``None`` if fastembed / the ONNX weights are
+    unavailable. Forces offline mode so a scored run with the network cut never
+    stalls on a download — a missing cache degrades to the identity fallback.
+    """
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    try:
+        from fastembed.rerank.cross_encoder import TextCrossEncoder
+
+        return TextCrossEncoder(model_name=model_name, cache_dir=cache_dir)
+    except Exception:
+        return None
+
+
+class LocalReranker:
+    """Offline cross-encoder reranker for the deterministic (scored) path.
+
+    Reorders the fusion window by cross-encoder relevance of ``(query, title)``
+    — titles only, never ``parent_asin`` (leakage rule). It is built
+    independently of the API key and *survives the LLM latch*, so the scored
+    offline run still reranks. Guarantees against regression:
+
+    * ``protect_head`` deterministic top picks are pinned — the cross-encoder
+      may promote a deep target but can never demote the strong top-1 prior
+      (where the target already sits on most turns), so Hit@10 / MRR are held.
+    * ``blend`` fuses the cross-encoder order with the incoming fusion rank via
+      weighted RRF (1.0 = pure cross-encoder over the tail, 0.0 = no-op).
+    * If fastembed or the weights are missing, ``available`` is ``False`` and
+      ``rerank`` returns the input untouched — a missing model cannot regress
+      the verified deterministic scores.
+
+    Returns ``(reordered, 0, 0)`` — zero tokens, keeping usage accounting valid.
+    """
+
+    def __init__(
+        self,
+        product_titles: dict[str, str],
+        model: str = "Xenova/ms-marco-MiniLM-L-6-v2",
+        cache_dir: str = "models",
+        blend: float = 1.0,
+        protect_head: int = 1,
+        cache_size: int = 4096,
+    ) -> None:
+        self._titles = product_titles
+        self._blend = max(0.0, min(1.0, float(blend)))
+        self._protect_head = max(0, int(protect_head))
+        self._cache_size = cache_size
+        self._cache: dict[tuple, list[int]] = {}
+        self._lock = threading.Lock()
+        self._ce = _load_cross_encoder(model, cache_dir)
+        self.available = self._ce is not None
+
+    def rerank(
+        self,
+        ranked: list[tuple[str, float]],
+        query: str,
+        user_profile: dict,
+        limit: int = 30,
+    ) -> tuple[list[tuple[str, float]], int, int]:
+        if not self.available or len(ranked) <= 1:
+            return ranked, 0, 0
+        window = ranked[:limit]
+        tail = ranked[limit:]
+        protect = window[: self._protect_head]
+        body = window[self._protect_head :]
+        if len(body) <= 1:
+            return ranked, 0, 0
+
+        titles = [self._titles.get(idf, "unknown product")[:160] for idf, _ in body]
+        key = (query, tuple(titles))
+        with self._lock:
+            order = self._cache.get(key)
+        if order is None:
+            try:
+                scores = list(self._ce.rerank(query, titles))
+            except Exception:
+                return ranked, 0, 0
+            order = sorted(range(len(body)), key=lambda i: -float(scores[i]))
+            with self._lock:
+                if len(self._cache) >= self._cache_size:
+                    self._cache.clear()
+                self._cache[key] = order
+
+        reordered_body = self._fuse(order, body)
+        return list(protect) + reordered_body + list(tail), 0, 0
+
+    def _fuse(self, ce_order, body):
+        n = len(body)
+        if self._blend >= 1.0:
+            return [body[i] for i in ce_order]
+        ce_rank = {pos: r for r, pos in enumerate(ce_order)}
+        k = RRF_K  # noqa: F405 — from text_utils *
+        scored = sorted(
+            range(n),
+            key=lambda det: -(
+                self._blend / (k + ce_rank.get(det, n) + 1)
+                + (1.0 - self._blend) / (k + det + 1)
+            ),
+        )
+        return [body[i] for i in scored]
 
 
 class HybridRanker:

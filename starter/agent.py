@@ -50,7 +50,7 @@ from starter.retrieval import (
     InMemoryVectorIndex,
     PhraseReranker,
 )
-from starter.ranking import LLMReranker, HybridRanker, ResponseBuilder
+from starter.ranking import LLMReranker, LocalReranker, HybridRanker, ResponseBuilder
 
 
 def _env_disables_llm() -> bool:
@@ -103,12 +103,40 @@ class Agent:
                         on_failure=self._latch_llm_off)
             if api_key else None
         )
+        # Offline cross-encoder reranker for the scored (deterministic) path.
+        # Built independently of the API key and NOT nulled by the latch, so a
+        # network-cut run still reranks. Degrades to identity if the weights or
+        # fastembed are missing, so it can never regress the deterministic
+        # scores. Tunables (for A/B sweeps) come from the environment.
+        self.local_reranker = self._build_local_reranker()
         self.bm25 = BM25Index(self.connection)
         self.constraints = ConstraintIndex(identifiers, semantic_documents)
         self.intent_cards = IntentCardIndex(identifiers, intent_cards)
         self.categories = CategoryIndex(identifiers, category_keys, self.popularity)
         self.semantic = InMemoryVectorIndex(identifiers, semantic_documents)
         self.phrase = PhraseReranker(self.product_text)
+
+    def _build_local_reranker(self) -> "LocalReranker | None":
+        """Construct the offline cross-encoder reranker unless disabled.
+
+        Disabled with ``LOCAL_RERANK=0``. ``LOCAL_RERANK_BLEND`` (default 1.0)
+        and ``LOCAL_RERANK_PROTECT`` (default 1) tune the fuse. Returns ``None``
+        if disabled or the model is unavailable (identity — no reranking).
+        """
+        if os.environ.get("LOCAL_RERANK", "1").strip() == "0":
+            return None
+        try:
+            blend = float(os.environ.get("LOCAL_RERANK_BLEND", "1.0"))
+        except ValueError:
+            blend = 1.0
+        try:
+            protect = int(os.environ.get("LOCAL_RERANK_PROTECT", "1"))
+        except ValueError:
+            protect = 1
+        reranker = LocalReranker(
+            self.product_titles, blend=blend, protect_head=protect
+        )
+        return reranker if reranker.available else None
 
     def _latch_llm_off(self) -> None:
         """Whole-run latch: on the first hard LLM failure, disable the LLM for
@@ -400,7 +428,10 @@ class Agent:
             or bool(fuzzy_card_results)
             or memory.last_override_turn is not None
         )
-        if self.reranker is not None and not rerank_overwritten:
+        # LLM reranker when the key is live, else the offline cross-encoder on
+        # the scored path — either reorders the plain-fusion window only.
+        active_reranker = self.reranker or self.local_reranker
+        if active_reranker is not None and not rerank_overwritten:
             wide = HybridRanker.fuse(
                 bm25_results,
                 semantic_results,
@@ -412,7 +443,7 @@ class Agent:
                 fusion_k=dynamic_k,
             )
             if len(wide) > 1:
-                reranked, rr_pt, rr_ct = self.reranker.rerank(
+                reranked, rr_pt, rr_ct = active_reranker.rerank(
                     wide, query, memory.user_profile, limit=RERANK_WINDOW,
                 )
                 ranked = reranked[:top_k]

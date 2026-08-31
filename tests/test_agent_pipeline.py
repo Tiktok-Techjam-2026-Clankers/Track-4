@@ -415,6 +415,37 @@ class LLMRerankerTest(unittest.TestCase):
         self.assertEqual(result, original)
 
 
+class LocalRerankerTest(unittest.TestCase):
+    def test_unavailable_model_falls_back_to_identity(self) -> None:
+        from starter.agent import LocalReranker
+        with patch("starter.ranking._load_cross_encoder", return_value=None):
+            reranker = LocalReranker({"A": "a", "B": "b", "C": "c"})
+        self.assertFalse(reranker.available)
+        original = [("A", 1.0), ("B", 0.9), ("C", 0.8)]
+        result, pt, ct = reranker.rerank(original, "query", {})
+        self.assertEqual(result, original)
+        self.assertEqual((pt, ct), (0, 0))
+
+    def test_protect_head_pins_top_and_reorders_tail(self) -> None:
+        from starter.agent import LocalReranker
+
+        class FakeCE:
+            def rerank(self, query, titles):  # score ascending by position
+                return [float(i) for i in range(len(titles))]
+
+        with patch("starter.ranking._load_cross_encoder", return_value=FakeCE()):
+            reranker = LocalReranker(
+                {"A": "a", "B": "b", "C": "c", "D": "d"},
+                blend=1.0, protect_head=1,
+            )
+        self.assertTrue(reranker.available)
+        ranked = [("A", 4.0), ("B", 3.0), ("C", 2.0), ("D", 1.0)]
+        result, pt, ct = reranker.rerank(ranked, "query", {}, limit=30)
+        # A is pinned; body [B, C, D] reordered by CE score desc → [D, C, B].
+        self.assertEqual([r[0] for r in result], ["A", "D", "C", "B"])
+        self.assertEqual((pt, ct), (0, 0))
+
+
 class ChooseQuestionTest(unittest.TestCase):
     def test_llm_suggestion_takes_priority(self) -> None:
         memory = ConversationMemory({})

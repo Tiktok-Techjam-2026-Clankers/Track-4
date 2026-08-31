@@ -628,6 +628,103 @@ rank. Blending the reranker therefore cannot close the gap. The prototype was
 behaviour. Improving the LLM path would require changing intent parsing, a
 separate lever left for future work (§18).
 
+### 12.7 Local pretrained cross-encoder reranker — measured, adopted
+
+The competition asks for a reranking stage, but the shipped `LLMReranker` runs
+only when an OpenAI key is present — so on the **scored offline path** (network
+cut, no key) nothing reranks. To close that, we added `LocalReranker`
+(`starter/ranking.py`): an offline HuggingFace cross-encoder,
+`Xenova/ms-marco-MiniLM-L-6-v2` via `fastembed.TextCrossEncoder` (ONNX/CPU, no
+torch, ~103 MB, zero network, zero tokens), that reorders the plain-fusion
+window by `(query, title)` relevance. It is built independently of the key,
+survives the LLM latch, and shares one process-cached model across agents.
+Titles only ever enter the model — never `parent_asin` (leakage rule #3).
+
+**Isolated A/B first (which reranker is better?).** Harness
+`scripts/eval_local_rerank.py`, window 30, *pure reorder*, deterministic intent
+held fixed so the reranker is the only variable:
+
+| reranker | Default | Extended | tokens |
+|---|---:|---:|---:|
+| none (deterministic) | **0.9707** | **0.9682** | 0 |
+| OpenAI `gpt-4.1-mini` | 0.9704 | 0.9682 | 159 k |
+| local cross-encoder (pure reorder) | 0.9704 | 0.9674 | **0** |
+
+The local cross-encoder **ties** OpenAI (identical on Default, 0.0008 behind on
+Extended) at zero tokens/latency/network — so for the reranking role the local
+model is strictly the better engineering choice. But *pure* reorder costs a
+hair vs no-rerank: Hit@10 and MRR are identical across all three (the target is
+already at fusion rank 1 on hit turns, so no reorder changes them), and only
+MTTC drifts a step when a reorder demotes that rank-1 target.
+
+**Shipped config — `protect_head=1`.** Pinning the deterministic top-1 pick and
+reordering only ranks 2–30 removes that MTTC drift entirely: the strong prior
+that holds Hit/MRR is preserved, while the cross-encoder can still promote a
+deep candidate on turns where the target is not yet rank 1. Wired into the
+scored path (`agent.py`: `active_reranker = self.reranker or self.local_reranker`),
+it reproduces the deterministic baseline **exactly** on every set:
+
+| set | baseline | local CE, `protect_head=1` |
+|---|---:|---:|
+| Default (200) | 0.9707 | **0.9707** |
+| Extended (500) | 0.9682 | **0.9682** |
+| robust stress (200) | 0.9407 | **0.9407** |
+| robust validation (500) | 0.9035 | **0.9035** |
+| pytest | 121 pass | **121 pass** |
+
+**Adopted.** A genuine cross-encoder reranking stage now runs on the offline
+scored path at zero score cost and zero regression, satisfying the spec's
+reranking requirement. It does not *raise* the metric — reranking cannot, since
+the target already sits at rank 1 where the reranker can see it, and the
+drift-misses live on the gated prefix/fuzzy/override routes it never touches.
+Enabled by default; disable with `LOCAL_RERANK=0`; `LOCAL_RERANK_BLEND` /
+`LOCAL_RERANK_PROTECT` tune the fuse. If fastembed or the weights are absent it
+degrades to identity, so a missing model can never regress the deterministic
+scores. The ~103 MB weights stay git-ignored under `models/`; prefetch them for
+offline scoring with `python scripts/prefetch_models.py` (§13). The real
+remaining lever is **intent parsing**, not reranking (§18).
+
+### 12.8 Pretrained semantic embeddings — measured, rejected
+
+The deterministic `semantic` route (`starter.retrieval.InMemoryVectorIndex`) is
+a feature-hashing bag-of-words encoder with IDF — lexical, not semantic, so it
+can only match shared tokens and was the obvious suspect for the paraphrase
+drift in §12.5. We tested replacing it with a **pretrained sentence-embedding
+model** (fastembed `BAAI/bge-small-en-v1.5`, 384-dim ONNX/CPU, no torch): the
+50k catalog is embedded offline once (`scripts/precompute_embeddings.py`, cached
+to `models/catalog_bge-small-en-v1_5.npz`, git-ignored) and queries are embedded
+per turn. `scripts/eval_semantic_embed.py` plugs the pretrained index into the
+same seam and scores three modes on both the official and robust sets, with the
+cross-encoder reranker disabled (`LOCAL_RERANK=0`) to isolate the route. Titles
+and attributes only enter the model — never `parent_asin` (leakage rule §16).
+
+| mode | Default | Extended | robust stress | robust validation | intent_override (str/val) |
+|---|---:|---:|---:|---:|---:|
+| lexical (baseline) | **0.9707** | **0.9682** | **0.9407** | 0.9035 | 0.8793 / 0.8716 |
+| pretrained (α=1.0) | 0.9708 | 0.9680 | 0.9401 | **0.9064** | 0.8793 / 0.8716 |
+| blend RRF (α=0.5)  | 0.9708 | 0.9681 | 0.9405 | 0.9062 | 0.8793 / 0.8716 |
+
+**Rejected**, for two independent reasons:
+
+1. **Official Extended drops below the 0.9682 floor** (pretrained 0.9680, blend
+   0.9681). Hit@10 and MRR are byte-identical to lexical (0.9980 / 0.9886) on
+   every mode — the entire delta is a small MTTC/efficiency wobble, i.e. a
+   *later* first correct hit, not a retrieval improvement. That violates the
+   hard "official at or above 0.9682" constraint.
+2. **It does not touch the actual weak scenario.** The +0.003 validation gain is
+   a diffuse browsing/buying lift on one split; stress is neutral-to-slightly-
+   worse. Critically, `intent_override` — the scenario that collapses under
+   drift (§12.5) — is *identical to the hundredth* under all three modes, because
+   that path is gated by **override detection**, not semantic recall. Better
+   embeddings cannot reach the route that actually fails.
+
+So a pretrained semantic index is a lateral move at best and a floor violation
+at worst. `starter/` is left on the lexical index. The measurement harness and
+precompute script are kept for reproducibility but the ~77 MB vector cache is
+git-ignored. Confirms the §12.6/§12.7 conclusion from the retrieval side too:
+the remaining lever is **intent/override parsing under drift** (§18), not the
+retrieval encoder.
+
 ## 13. Setup and execution
 
 Python 3.10+.
@@ -759,7 +856,10 @@ sample-specific rules. No ASINs are ever placed in an LLM prompt.
 
 ## 18. Future improvements
 
-- Replace feature hashing with a compact local sentence-embedding model.
+- ~~Replace feature hashing with a compact local sentence-embedding model.~~
+  *Measured (§12.8): bge-small ties/loses on official (drops Extended below the
+  0.9682 floor) and does not touch the `intent_override` collapse — rejected.
+  The drift lever is override parsing, not the retrieval encoder.*
 - Learn route weights from session-outcome features with strict cross-validation.
 - Estimate question value from candidate-pool entropy (beyond LLM suggestion).
 - Richer numeric parsing for size and price ranges.
