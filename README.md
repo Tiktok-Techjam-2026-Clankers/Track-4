@@ -77,9 +77,20 @@ optional offline cross-encoder reranker (`starter.ranking.LocalReranker`); if it
 or its weights are absent, the reranker degrades to identity and scores are
 unchanged.
 
-Download the catalog from the GitHub Release attached to this repo:
+`data/catalog.jsonl` (50,000 rows) is not committed. Fetch it — the script
+downloads the release archive, verifies it against the published SHA256SUMS,
+and extracts it to the right place:
 
 ```bash
+bash scripts/download_catalog.sh
+```
+
+It is idempotent: if the catalog is already present with 50,000 rows it exits
+immediately. Requires `curl`, `gzip`, `sha256sum`, `awk`, and `wc`. To do it by
+hand instead:
+
+```bash
+curl -L -o catalog.jsonl.gz https://github.com/TechJam2026/techjam-conversational-search/releases/download/participant-kit/catalog.jsonl.gz
 gzip -dk catalog.jsonl.gz
 mv catalog.jsonl data/catalog.jsonl            # verify against SHA256SUMS
 ```
