@@ -1,8 +1,8 @@
-# TurnWise Shopping Copilot — Implementation Guide
+# ShopMind Shopping Copilot — Implementation Guide
 
 ## 1. Purpose
 
-TurnWise is a conversational product-search agent for TechJam Track 4. A hidden
+ShopMind is a conversational product-search agent for TechJam Track 4. A hidden
 simulated shopper reveals what they want one reply at a time; the agent must put
 the shopper's hidden **target product** into a list of at most 10 `parent_asin`
 values — as high as possible, in as few turns as possible.
