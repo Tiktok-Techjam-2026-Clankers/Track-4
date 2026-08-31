@@ -1,4 +1,4 @@
-"""Score the agent against the default and extended local datasets."""
+"""Score the agent against the local development dataset."""
 
 from __future__ import annotations
 
@@ -20,7 +20,6 @@ from evaluator.local_evaluator import (  # noqa: E402
 CATALOG_PATH = REPO_ROOT / "data" / "catalog.jsonl"
 DATASETS = (
     ("Default", REPO_ROOT / "data" / "public_set.jsonl"),
-    ("Extended", REPO_ROOT / "data" / "private_set.jsonl"),
 )
 
 
