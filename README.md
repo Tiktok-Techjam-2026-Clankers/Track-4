@@ -299,4 +299,8 @@ data/             catalog + session sets
 
 | Member | Role / contribution |
 |---|---|
-| _TODO_ | _fill in before submission_ |
+| Di Heng | Retrieval and ranking pipeline |
+| Louis| Conversation memory and intent parsing |
+| Xavier | Evaluation and testing |
+| Yu Xuan| Devpost writeup |
+| Yuhan | Demo video |
