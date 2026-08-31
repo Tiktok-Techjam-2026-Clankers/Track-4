@@ -313,6 +313,16 @@ evaluator/        local simulator and scorer — the only entry point (do not mo
 data/             catalog + session sets
 ```
 
+## What's next
+
+Our next steps to make ShopMind even more advanced:
+
+- **Learn route weights from session-outcome features** with strict
+  cross-validation.
+- **Estimate question value from candidate-pool entropy** beyond LLM suggestion.
+- **Richer numeric parsing** for size and price ranges.
+- **Cross-session profile learning** — profiles are per-session today.
+
 ## Team
 
 | Member | Role / contribution |
