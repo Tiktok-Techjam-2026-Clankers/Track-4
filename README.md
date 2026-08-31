@@ -141,7 +141,7 @@ values in any prompt.
 Mode is chosen by the **presence of a key**, not a command. To force
 deterministic mode use any of:
 
-- `--no-llm` on the evaluation scripts
+- `--no-llm` on `scripts/query.py`
 - `DISABLE_LLM=1` in the environment
 - `Agent(catalog_path, use_llm=False)` in code
 - simply leaving `OPENAI_API_KEY` unset

@@ -31,8 +31,8 @@ must stay byte-identical to `main`.
 
 Older docs quoted a stale `0.9726 / 0.9682` deterministic baseline from the
 pre-OpenAI (Gemini-era) code; it was never re-measured and caused a wrong
-"regression" revert. **Always re-measure deterministically** (`--no-llm`, or
-`DISABLE_LLM=1`, or no `OPENAI_API_KEY`) rather than comparing against a number
+"regression" revert. **Always re-measure deterministically**
+(`DISABLE_LLM=1`, or no `OPENAI_API_KEY`) rather than comparing against a number
 written in a file. If you update a results table, run the eval that produced it.
 
 ## 3. No leakage — hard constraint
@@ -53,8 +53,9 @@ written in a file. If you update a results table, run the eval that produced it.
 ## 5. LLM is the default; deterministic is the fallback
 
 - The mode is chosen by the **presence of a key**, not by a command.
-- Disable the LLM explicitly with any of: `--no-llm` flag, `DISABLE_LLM=1`, or
-  `Agent(catalog_path, use_llm=False)`. All three set the key to `None`.
+- Disable the LLM explicitly with `DISABLE_LLM=1`, or
+  `Agent(catalog_path, use_llm=False)`. Both set the key to `None`. (The
+  `--no-llm` flag exists only on `scripts/query.py`, not on the evaluator.)
 - **Whole-run latch:** the first *hard* LLM failure (timeout / network / HTTP /
   empty response) disables the LLM for the rest of the process via
   `Agent._latch_llm_off()`. A low-confidence answer is NOT a failure and must

@@ -330,7 +330,7 @@ All figures are re-measured on the current OpenAI codebase.
 ### 12.1 Deterministic — verified
 
 Measured with **no key present**, so every turn runs offline with zero network
-calls. Byte-identical across runs. Reproduce with `--no-llm`, `DISABLE_LLM=1`,
+calls. Byte-identical across runs. Reproduce with `DISABLE_LLM=1`
 or simply no `OPENAI_API_KEY`:
 
 | Test set | Sessions | HitRate@10 | MRR | MTTC | Efficiency | TechnicalScore |
@@ -395,7 +395,7 @@ Three triggers, one outcome:
 |---|---|---|
 | **No API key** | `OPENAI_API_KEY` absent at startup | LLM parser/reranker never built; deterministic from turn 1. Zero calls, zero tokens. |
 | **First LLM failure (latch)** | One hard failure (timeout, DNS/connection, HTTP, empty/malformed) on either call | LLM latched **off for the rest of the process**; that turn already fell back. |
-| **Explicit opt-out** | `--no-llm`, `DISABLE_LLM=1`, or `use_llm=False` | Deterministic from turn 1. |
+| **Explicit opt-out** | `DISABLE_LLM=1` or `use_llm=False` | Deterministic from turn 1. |
 
 - **One failure is enough** — no per-turn retry, so a cut network never eats
   repeated timeouts. See `Agent._latch_llm_off()`.
