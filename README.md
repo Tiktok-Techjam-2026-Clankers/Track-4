@@ -84,7 +84,7 @@ gzip -dk catalog.jsonl.gz
 mv catalog.jsonl data/catalog.jsonl            # verify against SHA256SUMS
 ```
 
-## Reproduce the scores
+## Evaluation
 
 A single entry point scores the agent: the competition harness in
 `evaluator/local_evaluator.py`. It writes `results.json` and prints the metric
