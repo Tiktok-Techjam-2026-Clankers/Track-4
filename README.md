@@ -86,19 +86,28 @@ mv catalog.jsonl data/catalog.jsonl            # verify against SHA256SUMS
 
 ## Reproduce the scores
 
-Deterministic (no key needed — this is the scored path):
+A single entry point scores the agent: the competition harness in
+`evaluator/local_evaluator.py`. It writes `results.json` and prints the metric
+summary.
+
+Deterministic — **this is the scored path** (no key, no network):
 
 ```bash
-python scripts/evaluate_datasets.py --no-llm
-# → Public 0.9707 · 0 tokens
+DISABLE_LLM=1 python3 -m evaluator.local_evaluator
 ```
+
+`DISABLE_LLM=1` forces the deterministic pipeline regardless of any key in the
+environment. If no `OPENAI_API_KEY` is present, the bare command below is
+already deterministic — the env var makes that explicit and reproducible.
 
 LLM mode (requires an OpenAI key in `.env` or `OPENAI_API_KEY`):
 
 ```bash
 echo "OPENAI_API_KEY=sk-..." > .env             # .env is gitignored
-python scripts/evaluate_datasets.py
+python3 -m evaluator.local_evaluator
 ```
+
+Both accept `--catalog`, `--dataset`, and `--output` to point at other files.
 
 Run the test suite:
 
@@ -297,10 +306,10 @@ Final results vs baseline (**0.107** TechnicalScore, public 200 sessions):
 
 ```text
 starter/          agent implementation (deterministic + optional LLM)
-scripts/          evaluation entry points (evaluate_datasets.py is the main one)
+scripts/          single-query demo (query.py) + model/catalog fetch helpers
 tests/            unit + contract + adversarial tests
 docs/             architecture, API contract, implementation notes
-evaluator/        local simulator and scorer (do not modify)
+evaluator/        local simulator and scorer — the only entry point (do not modify)
 data/             catalog + session sets
 ```
 

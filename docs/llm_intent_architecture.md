@@ -89,7 +89,7 @@ You can also set the variable in your shell if you prefer:
 
 ```bash
 export OPENAI_API_KEY="your-key-here"
-python scripts/evaluate_datasets.py
+python3 -m evaluator.local_evaluator
 ```
 
 When the variable is unset or empty, the agent falls back to pure

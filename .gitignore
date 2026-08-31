@@ -5,7 +5,6 @@ __pycache__/
 .env
 results.json
 stress_results.json
-custom_evaluator_1_results.json
 data/catalog.jsonl
 data/catalog.jsonl.gz
 data/releases/
@@ -22,10 +21,12 @@ tests/test_organizer_pipeline.py
 *.log
 # Local model weights (e.g. fastembed ONNX cache) — never commit; large + reproducible.
 models/
-# Regenerable robust-eval outputs (see scripts/evaluate_robust.py).
+# Regenerable eval outputs.
 benchmark-results/
-# Regenerable robust-eval CASES (contain sample_ids + ground-truth ASINs —
-# leakage-shaped; rebuild with `python -m scripts.gen_robust_cases`).
+# Robust-eval CASES (contain sample_ids + ground-truth ASINs — leakage-shaped).
 data/robust/
+# Runtime caches written by the agent during a scoring run.
+data/.embedding_cache/
+data/.intent_cache/
 # Stray session/telemetry artifact.
 :memory:.ses

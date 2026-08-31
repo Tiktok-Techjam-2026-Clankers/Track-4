@@ -75,7 +75,7 @@ class Agent:
     ) -> None:
         self.catalog_path = Path(catalog_path)
         # check_same_thread=False lets one agent serve concurrent sessions
-        # (scripts/fast_eval.py); BM25Index serialises access with a lock.
+        # (concurrent-session harnesses); BM25Index serialises access with a lock.
         self.connection = sqlite3.connect(":memory:", check_same_thread=False)
         self.intent_classifier = IntentClassifier()
         self.sessions: dict[str, ConversationMemory] = {}

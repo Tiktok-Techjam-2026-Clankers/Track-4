@@ -371,7 +371,7 @@ parallel load. Given a 20 s timeout it delivers clean coverage.
 
 > Measurement instance only (no `starter/` change): timeouts raised to 20 s and
 > the latch neutralised so a transient blip degrades only that turn. 8 workers
-> (`scripts/fast_eval.py`). Transient single-turn fallbacks: 2/~600 (default);
+> (concurrent-session harness, since removed). Transient single-turn fallbacks: 2/~600 (default);
 > reranker never fell back. Not byte-reproducible.
 
 nano edges mini in the LLM bracket (+0.0087 default) and is
@@ -409,10 +409,11 @@ Three triggers, one outcome:
 
 The official datasets phrase turns cleanly ("what I need is …", "features: …"),
 which fires the exact/prefix routes. To probe overfitting to that phrasing,
-`scripts/gen_robust_cases.py` derives a **robust** eval that paraphrases turns,
-swaps synonyms, and strips markers; `scripts/evaluate_robust.py` scores two
-splits — **stress** (public-derived, 200) and **validation** (private-derived,
-500).
+a generator derived a **robust** eval that paraphrased turns, swapped synonyms,
+and stripped markers, scored over two splits — **stress** (public-derived, 200)
+and **validation** (private-derived, 500). *These harnesses have since been
+removed from the repo (see §13); the numbers below are retained as the record of
+why the override fixes landed, and are no longer re-runnable here.*
 
 **First fix — deterministic override detection.** The offline `IntentClassifier`
 was a stub that **always returned `browsing`**, so `intent` was never `override`,
@@ -434,7 +435,7 @@ retraction-cue detection, gated to non-opening turns. Pure numpy/regex.
 ordinary turns); the entire lift came from `intent_override`.
 
 **Second fix — fusion-seeded final-turn coverage.** A tracer
-(`scripts/trace_misses.py`) showed the remaining browsing/buying misses all took
+(a per-sample miss tracer, since removed) showed the remaining browsing/buying misses all took
 the fuzzy single-item walk, with the target often at full-fusion rank 1–8 yet
 never surfaced — because the walk (and its turn-10 fallback) followed
 `fuzzy_card_results` ordering, which diverges from the RRF fusion under drift.
@@ -451,16 +452,7 @@ Per-scenario robust breakdown at current HEAD (both fixes):
 
 Effect of the second fix alone: stress 0.9264 → **0.9407**, validation 0.8896 →
 **0.9035**; official scores and all tests byte-identical, no scenario regressed.
-Reproduce:
-
-```bash
-python -m scripts.gen_robust_cases                      # regenerate data/robust/
-python -m scripts.evaluate_robust stress --no-llm
-python -m scripts.evaluate_robust validation --no-llm
-```
-
-**Generalization guard.** `scripts/evaluate_robust_heldout.py` re-runs the
-identical machinery with a **disjoint** synonym set (no shared surface forms:
+**Generalization guard.** A held-out variant re-ran the identical machinery with a **disjoint** synonym set (no shared surface forms:
 `comfortable→cushioned`, `waterproof→water-repellent`, `gray→charcoal`). If a
 change helped only the primary map, a gap would show here:
 
@@ -510,7 +502,7 @@ torch, ~103 MB, zero network, zero tokens), reordering the plain-fusion window b
 `(query, title)` relevance. Built independently of the key, survives the latch,
 one process-cached model. Titles only — never `parent_asin` (§16).
 
-**Isolated A/B** (`scripts/eval_local_rerank.py`, window 30, pure reorder,
+**Isolated A/B** (window 30, pure reorder,
 deterministic intent held fixed):
 
 | reranker | Default | Extended | tokens |
@@ -551,8 +543,8 @@ The deterministic `semantic` route is a feature-hashing bag-of-words encoder
 (lexical, not semantic) — the obvious suspect for the §12.5 drift. We tested
 replacing it with pretrained sentence embeddings (fastembed
 `BAAI/bge-small-en-v1.5`, 384-dim ONNX/CPU): the 50k catalog is embedded offline
-once (`scripts/precompute_embeddings.py`, cached git-ignored) and queries per
-turn. `scripts/eval_semantic_embed.py` plugs it into the same seam, reranker off
+once (cached git-ignored) and queries per
+turn. An A/B harness plugged it into the same seam, reranker off
 (`LOCAL_RERANK=0`) to isolate the route. Titles only — never `parent_asin` (§16).
 
 | mode | Default | Extended | stress | validation | intent_override (str/val) |
@@ -598,14 +590,15 @@ Remove the key and the same commands run deterministically.
 ```bash
 # .env at project root (auto-read; never exported to prompts):  OPENAI_API_KEY=sk-...
 
-python -m evaluator.local_evaluator --catalog data/catalog.jsonl --output results.json
-python scripts/evaluate_datasets.py        # default + extended datasets
-python -m pytest tests/ -q                 # all LLM calls mocked — no key/network
+python3 -m evaluator.local_evaluator                 # the only scorer
+DISABLE_LLM=1 python3 -m evaluator.local_evaluator   # deterministic scored path
+python -m pytest tests/ -q                           # LLM calls mocked — no key/network
 ```
 
-Force deterministic even with a key present via any of `--no-llm`,
-`DISABLE_LLM=1`, or `Agent(catalog_path, use_llm=False)`. All three set the
-internal key to `None`, identical to having no key.
+`evaluator/local_evaluator.py` is byte-identical to `main` and takes no
+`--no-llm` flag. Force deterministic even with a key present via `DISABLE_LLM=1`
+or `Agent(catalog_path, use_llm=False)`; both set the internal key to `None`,
+identical to having no key.
 
 ## 14. Glossary
 
@@ -675,10 +668,8 @@ the fuzzy walk — no hand-tuned rank constants. No ASINs ever enter an LLM prom
 | `starter/intent_parser.py` | LLM intent layer (OpenAI + deterministic fallback) |
 | `tests/test_agent_pipeline.py` | Intent, memory, retrieval, ranking, rerank, clarification, contract tests |
 | `tests/test_intent_parser.py` | Intent-parser unit tests (mocked) |
-| `scripts/evaluate_datasets.py` | Score against default + extended datasets |
-| `scripts/evaluate_robust.py` | Paraphrase/noise generalisation evaluator |
-| `scripts/evaluate_splits.py` | Multi-split evaluator with locked-test safety |
-| `evaluator/local_evaluator.py` | Official local evaluator (participant kit) |
+| `scripts/query.py` | Single-query / interactive demo |
+| `evaluator/local_evaluator.py` | Official local evaluator (participant kit) — sole entry point, unmodified |
 | `docs/llm_intent_architecture.md` | LLM integration architecture and failure modes |
 | `docs/competition_reference.md` | Competition rules, metrics, submission requirements |
 

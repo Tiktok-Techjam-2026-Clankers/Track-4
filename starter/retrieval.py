@@ -26,7 +26,7 @@ class BM25Index:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
         # A single in-memory connection is shared across concurrent sessions
-        # (see scripts/fast_eval.py). Queries are milliseconds against an LLM
+        # (under concurrent sessions). Queries are milliseconds against an LLM
         # call's hundreds, so serialising them with a lock costs nothing and
         # keeps SQLite access thread-safe.
         self._lock = threading.Lock()

@@ -6,3 +6,7 @@ numpy>=1.24,<3
 # degrades to identity and scores are unchanged. Prefetch the ONNX weights into
 # ./models with `python scripts/prefetch_models.py` before an offline run.
 fastembed>=0.8,<0.9
+
+# Test-only: runs the unit/contract/adversarial suite (`python -m pytest tests/ -q`).
+# Not imported by starter/ or evaluator/ — the agent and the scorer run without it.
+pytest>=8,<10

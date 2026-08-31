@@ -19,11 +19,13 @@ official score **at or above** 0.970700 and must not regress any
 robust scenario. Re-measure after every non-trivial change:
 
 ```bash
-python scripts/evaluate_datasets.py --no-llm     # must print 0.9707
-python -m scripts.evaluate_robust stress --no-llm      # stress overall ≥ 0.9407
-python -m scripts.evaluate_robust validation --no-llm  # validation overall ≥ 0.9035
-python -m pytest tests/ -q                        # must stay green (121 passed)
+DISABLE_LLM=1 python3 -m evaluator.local_evaluator   # must print 0.9707
+python -m pytest tests/ -q                           # must stay green
 ```
+
+The robust/stress and split harnesses were removed along with the other
+testing evaluators; `evaluator/local_evaluator.py` is now the only scorer and
+must stay byte-identical to `main`.
 
 ## 2. Never trust a doc number you did not just measure
 
@@ -80,6 +82,6 @@ text_utils            (leaf: regexes, constants, pure text helpers)
 ## 7. Verification checklist before declaring done
 
 1. `python -m pytest tests/ -q` — all green.
-2. `python scripts/evaluate_datasets.py --no-llm` — 0.970700.
+2. `DISABLE_LLM=1 python3 -m evaluator.local_evaluator` — 0.970700.
 3. If you touched LLM code, note that the LLM path is measured separately and
    currently scores *below* deterministic (≈0.9384 default) — that is expected.
