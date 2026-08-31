@@ -2,6 +2,7 @@
   "name": "techjam-conversational-search",
   "private": true,
   "scripts": {
+    "query": "python scripts/query.py",
     "evaluate": "python scripts/evaluate_datasets.py",
     "evaluate-robust": "python scripts/evaluate_robust.py",
     "evaluate-splits": "python scripts/evaluate_splits.py",
