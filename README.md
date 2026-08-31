@@ -241,6 +241,9 @@ retrieval pipeline.
 
 ```python
 class Agent:
+    def __init__(self, catalog_path: str = "data/catalog.jsonl",
+                 use_llm: bool = True, model: str | None = None) -> None: ...
+
     def reset(self, session_id: str, user_profile: dict) -> None: ...
 
     def respond(self, session_id, user_message, turn, top_k) -> dict:
@@ -252,8 +255,12 @@ class Agent:
         }
 ```
 
+`model` overrides the LLM model name (default `gpt-4.1-mini`; ignored when
+`use_llm=False`).
+
 `ask_attribute` ∈ {`category`, `material`, `color`, `size`, `style`, `brand`,
-`budget`, `feature`, `use_case`, `other`, `null`}. See
+`budget`, `feature`, `use_case`, `other`}. The competition spec also permits
+`null` (no question), but this agent always asks a clarification. See
 [docs/agent_api_contract.json](docs/agent_api_contract.json).
 
 ## Improvements over baseline
