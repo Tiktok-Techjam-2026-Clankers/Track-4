@@ -598,6 +598,36 @@ shirt") describe it as a generic shirt, so it is a weak lexical match for its
 and neither a synonym table nor a re-ranker fixes them without risking
 regressions elsewhere — so they are left as-is.
 
+### 12.6 LLM reranker blend — measured, rejected
+
+The LLM-enabled path (§12.2) scores *below* the deterministic path, so we tested
+whether **blending** the LLM's reorder with the deterministic fusion prior —
+rather than letting the LLM overwrite the top-window order outright — recovers
+the gap. A prototype `LLMReranker(blend=…)` fused the two rank lists via weighted
+RRF (`blend=1.0` = pure LLM reorder, the shipped behaviour; `blend=0.0` = LLM
+reorder is a no-op). `scripts/sweep_rerank_blend.py` swept it on the LLM path
+(60 sessions/set, latch disabled, 20 s timeout so the LLM stayed live all run):
+
+| blend | Default | Extended |
+|---:|---:|---:|
+| 1.00 (shipped) | 0.9614 | 0.9167 |
+| 0.70 | 0.9614 | 0.9167 |
+| 0.50 | 0.9601 | 0.9167 |
+| 0.30 | 0.9601 | 0.9167 |
+| 0.00 | 0.9601 | 0.9167 |
+
+**The blend is inert on the metric.** Hit@10 and MRR are *identical* at every
+blend; only MTTC wobbles by one step on a couple of sessions (so `blend=1.0` is
+marginally best). Decisively, `blend=0.0` — where the reranker reorder does
+*nothing* — still scores 0.9601 / 0.9167, below deterministic 0.9707 / 0.9682.
+That localises the LLM path's deficit to **LLM intent parsing / routing**, not
+the reranker reorder: the target is already at fusion rank 1 in the window the
+reranker sees, so no reorder policy changes whether it is hit or its reciprocal
+rank. Blending the reranker therefore cannot close the gap. The prototype was
+**reverted** (no score improvement); the shipped reranker keeps its pure-reorder
+behaviour. Improving the LLM path would require changing intent parsing, a
+separate lever left for future work (§18).
+
 ## 13. Setup and execution
 
 Python 3.10+.
