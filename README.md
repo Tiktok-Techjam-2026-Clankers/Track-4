@@ -142,6 +142,27 @@ HTTP, or empty response) disables the LLM for the rest of the process and drops
 to deterministic instantly — a cut network never costs more than one timeout. A
 low-confidence answer is not a failure and does not latch.
 
+## Model and fallback rationale
+
+**1. LLM API: `gpt-4.1-mini`.** We use the model for validated intent JSON
+and reranking 30 product titles. We chose it because the mini variant reduces
+latency relative to full GPT-4.1 while retaining the GPT-4.1 family's
+conversational semantic understanding; it is cost-effective for this team due
+to lower pricing than the full model and remaining OpenAI credits; and the
+team's prior OpenAI API experience reduced integration risk around caching,
+schema validation, timeouts, fallback, and token accounting. OpenAI documents
+mini as the [smaller, faster GPT-4.1 variant](https://developers.openai.com/api/docs/models/gpt-4.1-mini).
+Newer models have not been tested under the same harness, so the team decided
+that this is a practical selection rationale.
+
+**2. Deterministic path.** Per-session memory and text normalization feed local
+BM25, constraint TF-IDF, exact/prefix/fuzzy/override intent-card, category,
+phrase, and hashed token/bigram retrieval. Dynamic Reciprocal Rank Fusion and a
+turn-aware recommendation ladder balance early rank quality with late coverage;
+an optional offline cross-encoder reranks positions 2-30 without moving the
+protected top result. Product IDs always come from the catalog, and one hard API
+failure latches both LLM calls off while preserving the complete local pipeline.
+
 ## Architecture
 
 Every turn runs five stages. The LLM layer is optional at two points (marked ★).
@@ -259,6 +280,9 @@ Final results vs baseline (**0.107** TechnicalScore, public 200 sessions):
   reveals a superset of constraints), so candidate-pool-aware questioning is
   deferred — it improves the *human* experience, not the automated score.
 - Persona / robustness splits are measured in deterministic mode only.
+- Model selection is not exhaustive. Future work will compare newer OpenAI and
+  non-OpenAI models under the same prompts, serial runner, timeout/latch policy,
+  and datasets, reporting ranking metrics, token use, cost, and p50/p95 latency.
 
 ## Security & data handling
 
