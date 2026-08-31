@@ -110,24 +110,29 @@ def main() -> None:
         print_response(response, titles)
         return
 
-    print("interactive mode — type 'quit' or Ctrl-D to exit.")
+    max_turns = 10
+    print(f"interactive mode (max {max_turns} turns) — type 'done' or 'quit' to exit.")
+    print("what are you looking for today?\n")
     turn = 1
     if args.query:  # allow seeding the REPL with a first query
         print(f"\n  you: {args.query}")
         print_response(agent.respond(SESSION_ID, args.query, turn, args.top_k), titles)
         turn += 1
-    while True:
+    while turn <= max_turns:
         try:
             message = input("\n  you: ").strip()
         except EOFError:
             print()
             break
-        if message.lower() in {"quit", "exit"}:
+        if message.lower() in {"quit", "exit", "done"}:
+            print("\nsession ended by user.")
             break
         if not message:
             continue
         print_response(agent.respond(SESSION_ID, message, turn, args.top_k), titles)
         turn += 1
+    else:
+        print(f"\nmax turns ({max_turns}) reached — session complete.")
 
 
 if __name__ == "__main__":

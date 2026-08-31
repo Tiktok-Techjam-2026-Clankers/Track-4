@@ -128,7 +128,9 @@ follows the same key-presence rule; force deterministic with `--no-llm`.
 
 A single-query run executes one turn — the agent returns its top recommendations
 and may ask a clarifying question (e.g. budget, material). Use `-i` for an
-interactive session where you can answer follow-ups across multiple turns.
+interactive session where you can answer follow-ups across up to 10 turns.
+Type `done` or `quit` to end the session early if you're satisfied with the
+recommendations.
 
 ```bash
 python scripts/query.py "waterproof hiking boots under $100"
