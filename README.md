@@ -1,4 +1,4 @@
-# Shopping Copilot — TechJam 2026 Track 4
+# ShopMind Shopping Copilot — TechJam 2026 Track 4
 
 A conversational product-search agent that asks useful follow-up questions and
 surfaces the customer's hidden target product within 10 turns. Built on a frozen
