@@ -1,0 +1,12 @@
+numpy>=1.24,<3
+
+# Optional: offline cross-encoder reranker for the scored path (starter.ranking
+# .LocalReranker). Pulls onnxruntime + tokenizers. The deterministic pipeline
+# runs on numpy alone — if fastembed or the weights are absent, the reranker
+# degrades to identity and scores are unchanged. Prefetch the ONNX weights into
+# ./models with `python scripts/prefetch_models.py` before an offline run.
+fastembed>=0.8,<0.9
+
+# Test-only: runs the unit/contract/adversarial suite (`python -m pytest tests/ -q`).
+# Not imported by starter/ or evaluator/ — the agent and the scorer run without it.
+pytest>=8,<10

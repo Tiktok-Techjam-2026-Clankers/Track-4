@@ -2,6 +2,7 @@
   "name": "techjam-conversational-search",
   "private": true,
   "scripts": {
-    "score": "python scripts/score_datasets.py"
+    "query": "python scripts/query.py",
+    "evaluate": "python -m evaluator.local_evaluator"
   }
 }
