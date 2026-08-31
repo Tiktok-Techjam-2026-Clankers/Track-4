@@ -82,7 +82,9 @@ cost is disclosed above.
 Python 3.10+.
 
 ```bash
-python -m pip install -r requirements.txt      # numpy (required) + fastembed (optional)
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt                # numpy (required) + fastembed (optional)
 ```
 
 The deterministic pipeline runs on **numpy alone**. `fastembed` powers the
@@ -123,6 +125,10 @@ python -m pytest tests/ -q
 
 Run the agent on one message, or start an interactive multi-turn session. Mode
 follows the same key-presence rule; force deterministic with `--no-llm`.
+
+A single-query run executes one turn — the agent returns its top recommendations
+and may ask a clarifying question (e.g. budget, material). Use `-i` for an
+interactive session where you can answer follow-ups across multiple turns.
 
 ```bash
 python scripts/query.py "waterproof hiking boots under $100"
