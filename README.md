@@ -21,8 +21,8 @@ consecutive deterministic runs are byte-identical.
 
 | Mode | Dataset | Sessions | Hit@10 | MRR | MTTC | TechnicalScore |
 |---|---|---:|---:|---:|---:|---:|
-| Deterministic | Public | 200 | 1.000 | 0.9933 | 2.580 | **0.966400** |
-| Deterministic | Extended holdout | 500 | 0.998 | 0.9835 | 2.706 | **0.959927** |
+| Deterministic | Public | 200 | 1.000 | 0.9867 | 2.265 | **0.970700** |
+| Deterministic | Extended holdout | 500 | 0.998 | 0.9886 | 2.370 | **0.968190** |
 | LLM (gpt-4.1-mini) | Public | 200 | 0.990 | 0.9496 | 3.075 | 0.938393 |
 | LLM (gpt-4.1-mini) | Extended holdout | 500 | 0.940 | 0.9080 | 3.692 | 0.888563 |
 | LLM (gpt-4.1-nano) | Public | 200 | 1.000 | 0.9660 | 3.135 | 0.947104 |
@@ -98,7 +98,7 @@ Deterministic (no key needed — this is the scored path):
 
 ```bash
 python scripts/evaluate_datasets.py --no-llm
-# → Default 0.9664 · Extended 0.9599 · 0 tokens
+# → Default 0.9707 · Extended 0.9682 · 0 tokens
 ```
 
 LLM mode (requires an OpenAI key in `.env` or `OPENAI_API_KEY`):

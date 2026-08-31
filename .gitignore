@@ -19,3 +19,12 @@ docs/participant_release_checklist.md
 tests/test_5core_builder.py
 tests/test_organizer_pipeline.py
 *.log
+# Local model weights (e.g. fastembed ONNX cache) — never commit; large + reproducible.
+models/
+# Regenerable robust-eval outputs (see scripts/evaluate_robust.py).
+benchmark-results/
+# Regenerable robust-eval CASES (contain sample_ids + ground-truth ASINs —
+# leakage-shaped; rebuild with `python -m scripts.gen_robust_cases`).
+data/robust/
+# Stray session/telemetry artifact.
+:memory:.ses

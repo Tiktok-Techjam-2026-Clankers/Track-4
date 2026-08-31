@@ -13,10 +13,20 @@ from starter.text_utils import *  # noqa: F401,F403 — shared helpers/constants
 
 
 class IntentClassifier:
-    """Minimal fallback classifier used only when the LLM is unavailable."""
+    """Minimal fallback classifier used only when the LLM is unavailable.
+
+    Returns ``browsing`` for openers and ordinary constraint turns; returns
+    ``override`` when a later turn carries an explicit retraction / topic-change
+    cue (see ``OVERRIDE_RE``). Detecting the override deterministically lets
+    ``ConversationMemory.observe`` drop the abandoned preference and reset the
+    recommendation walk, so a re-topiced target is no longer skipped as
+    "already shown" — the failure mode that sinks paraphrased override turns.
+    """
 
     @staticmethod
     def classify(message: str, active_query: str = "") -> str:
+        if active_query and OVERRIDE_RE.search(message):
+            return "override"
         return "browsing"
 
 

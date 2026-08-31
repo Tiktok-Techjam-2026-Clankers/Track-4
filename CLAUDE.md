@@ -6,17 +6,24 @@ have already hit. Read before changing `starter/` or the docs.
 ## 1. Preserve the verified scores
 
 The deterministic pipeline is the scored path when the organizer disables the
-network. Its verified TechnicalScores on the **current** codebase are:
+network. Its verified TechnicalScores on the **current** codebase (HEAD, after
+the override-detection + fusion-seeded-coverage fixes) are:
 
-- **Default public (200):** 0.966400  (Hit 1.000, MRR 0.993333, MTTC 2.580)
-- **Extended holdout (500):** 0.959927  (Hit 0.998, MRR 0.983490, MTTC 2.706)
+- **Default public (200):** 0.970700  (Hit 1.000, MRR 0.986667, MTTC 2.265)
+- **Extended holdout (500):** 0.968190  (Hit 0.998, MRR 0.988633, MTTC 2.370)
 
-Any change to `starter/` must keep these **exactly** (byte-identical across
-runs). Re-measure after every non-trivial change:
+These **supersede** the earlier 0.966400 / 0.959927, which were the scores of
+the override-*blind* code state (see `docs/agent_implementation.md` §12.5). The
+current objective is to **improve** the robust generalization scores *without
+dropping* the official scores above — so any change to `starter/` must keep the
+official scores **at or above** 0.970700 / 0.968190 and must not regress any
+robust scenario. Re-measure after every non-trivial change:
 
 ```bash
-python scripts/evaluate_datasets.py --no-llm     # must print 0.9664 / 0.9599
-python -m pytest tests/ -q                        # must stay green
+python scripts/evaluate_datasets.py --no-llm     # must print 0.9707 / 0.9682
+python -m scripts.evaluate_robust stress --no-llm      # stress overall ≥ 0.9407
+python -m scripts.evaluate_robust validation --no-llm  # validation overall ≥ 0.9035
+python -m pytest tests/ -q                        # must stay green (121 passed)
 ```
 
 ## 2. Never trust a doc number you did not just measure
@@ -74,6 +81,6 @@ text_utils            (leaf: regexes, constants, pure text helpers)
 ## 7. Verification checklist before declaring done
 
 1. `python -m pytest tests/ -q` — all green.
-2. `python scripts/evaluate_datasets.py --no-llm` — 0.966400 / 0.959927.
+2. `python scripts/evaluate_datasets.py --no-llm` — 0.970700 / 0.968190.
 3. If you touched LLM code, note that the LLM path is measured separately and
    currently scores *below* deterministic (≈0.9384 default) — that is expected.

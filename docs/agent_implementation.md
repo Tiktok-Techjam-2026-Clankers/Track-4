@@ -89,7 +89,15 @@ Intent parsing is **LLM-first** via `HybridIntentParser`:
    constraints, no-preference signals, a confidence score, and a
    `suggested_question`.
 2. **Deterministic fallback** — if the key is missing, the call times out or
-   errors, or confidence `< 0.5`, a minimal parser returns `browsing`.
+   errors, or confidence `< 0.5`, a minimal parser runs. It returns `browsing`
+   for openers and ordinary constraint turns, and `override` when a *later* turn
+   carries an explicit retraction cue (`OVERRIDE_RE` in `text_utils.py`:
+   scratch/forget/ignore/disregard/scrap the earlier…, "on second thought",
+   "changed my mind", "never mind", "instead of", "rather than", "switch to").
+   Detection is gated to non-opening turns so a first-message phrasing never
+   trips it. This override signal is essential offline: without it the decoy
+   preference is never retired and the re-topiced target — which retrieval ranks
+   #1 — is permanently skipped as "already shown" (see §12, robustness).
 
 `mode` is one of three **session modes**:
 
@@ -319,8 +327,9 @@ leakage-shaped constants — it was kept (comment at `agent.py:1392`).
 
 > Note on stale figures: an earlier version of this doc reported a 0.9726
 > deterministic baseline. That number predates the Gemini→OpenAI switch and was
-> never re-measured; the true current-code deterministic default is **0.966400**
-> (see §12).
+> never re-measured; the current-code deterministic default is **0.970700**
+> after re-adding override detection (§12.5), or **0.966400** for the
+> override-blind state it replaced (see §12).
 
 ## 11. Response, clarification & validation
 
@@ -362,7 +371,9 @@ reranking (two calls per turn).
 
 All figures below are re-measured on the **current OpenAI codebase**. (Earlier
 docs quoted a 0.9726/0.9682 deterministic baseline; those predate the
-Gemini→OpenAI switch and were never re-measured — they are superseded here.)
+Gemini→OpenAI switch and were never re-measured — they are superseded here. The
+current 0.9707/0.9682 is a fresh measurement after re-adding override detection,
+and the extended set now matches that historical 0.9682 exactly — see §12.5.)
 
 ### 12.1 Non-LLM (deterministic) — verified
 
@@ -378,8 +389,13 @@ DISABLE_LLM=1 python scripts/evaluate_datasets.py # env-var opt-out
 
 | Test set | Sessions | HitRate@10 | MRR | MTTC | Efficiency | TechnicalScore |
 |---|---:|---:|---:|---:|---:|---:|
-| Default public | 200 | 1.000 | 0.993333 | 2.580 | 0.8420 | **0.966400** |
-| Extended holdout | 500 | 0.998 | 0.983490 | 2.706 | 0.8294 | **0.959927** |
+| Default public | 200 | 1.000 | 0.986667 | 2.265 | 0.8735 | **0.970700** |
+| Extended holdout | 500 | 0.998 | 0.988633 | 2.370 | 0.8630 | **0.968190** |
+
+> **These are the post-override-fix scores (see §12.5).** The prior verified
+> baseline was 0.966400 / 0.959927; restoring deterministic override detection
+> (`OVERRIDE_RE` + `IntentClassifier.classify`, see §4) lifted MTTC (fewer turns
+> to convergence) and raised both sets. `HitRate@10` held at 1.000 / 0.998.
 
 ### 12.2 LLM-enabled (OpenAI `gpt-4.1-mini`, intent parsing + semantic reranking)
 
@@ -442,9 +458,10 @@ fallback, because the deterministic RRF ranker is already strongly tuned while
 the reranker sees only product titles. So the automatic no-key fallback is not
 just a safety net — it is currently the higher-scoring, zero-cost path. This
 holds on **both** test sets and **both** LLM models: deterministic beats LLM
-0.966400 vs 0.947104 (nano) / 0.938393 (mini) on default public, and 0.959927
+0.970700 vs 0.947104 (nano) / 0.938393 (mini) on default public, and 0.968190
 vs 0.890368 (nano) / 0.888563 (mini) on the extended holdout. (Persona splits
-remain deterministic-only.)
+remain deterministic-only. The deterministic margin *widened* after the override
+fix — see §12.5.)
 
 ```text
 Efficiency     = clip((11 − MTTC) / 10, 0, 1)
@@ -474,9 +491,112 @@ Key points:
   below the 0.5 threshold, that single turn uses the deterministic result but
   the LLM stays enabled — a weak answer is not a network problem.
 - **The scored path may well be the deterministic one.** Because deterministic
-  mode scores higher (0.966400 vs 0.938393 on default public) and is what runs
+  mode scores higher (0.970700 vs 0.938393 on default public) and is what runs
   under a disabled network, the verified deterministic numbers above are the
   ones most likely to reflect the official offline run.
+
+### 12.5 Robustness under paraphrase drift — the override fix
+
+The official datasets phrase every turn cleanly ("what I need is …",
+"features: …"), which fires the exact/prefix retrieval routes. To probe
+overfitting to that phrasing, `scripts/gen_robust_cases.py` derives a **robust**
+eval that paraphrases turns, swaps synonyms, and strips the "features:/style:"
+markers; `scripts/evaluate_robust.py` scores it in two splits — **stress**
+(public-derived, 200 sessions) and **validation** (private-derived, 500).
+
+This exposed one severe deterministic weakness: the offline `IntentClassifier`
+was a stub that **always returned `browsing`**, so `intent` was never
+`override`, `last_override_turn` stayed `None`, and the entire override-handling
+machinery (decoy clearing, `fuzzy_recommended` reset) was dead code. Under drift
+the override target was reachable at **fuzzy rank 1 in 28/30 stress cases** but
+was permanently skipped as "already shown" from the pre-override browsing turns.
+The official eval dodged this only because intact markers fire the marker-free
+prefix route. The fix (§4): `OVERRIDE_RE` retraction-cue detection, gated to
+non-opening turns. No new dependency — pure numpy/regex.
+
+**Measured impact (all re-measured, `--no-llm`):**
+
+| Eval | Metric | Before fix | After fix |
+|---|---|---:|---:|
+| Official default | TechnicalScore | 0.966400 | **0.970700** |
+| Official extended | TechnicalScore | 0.959927 | **0.968190** |
+| Robust **stress** | TechnicalScore | 0.8223 | **0.9264** |
+| Robust **validation** | TechnicalScore | 0.8035 | **0.8896** |
+| Robust stress | `intent_override` | 0.185 | **0.879** |
+| Robust validation | `intent_override` | 0.301 | **0.868** |
+
+`browsing`, `buying`, and `boundary` were **unchanged** by this first fix (the
+regex does not misfire on ordinary constraint turns); its entire lift came from
+`intent_override`. That left marker-strip degradation on browsing/buying and the
+validation boundary split as the next targets — addressed by the second fix.
+
+#### Second fix: fusion-seeded final-turn coverage
+
+A path-aware tracer (`scripts/trace_misses.py`) showed the remaining
+browsing/buying misses **all took the fuzzy single-item walk**, and the target
+frequently sat at **full-fusion rank 1–8 yet never surfaced** — because the walk
+follows `fuzzy_card_results` ordering (and its turn-10 coverage fallback drew
+from that same list), which under drift diverges from the full RRF fusion. The
+fix seeds the **final-turn** fuzzy coverage from the fusion order (`base_fusion`)
+*before* the card/constraint walks (`agent.py`, turn-10 branch of
+`fuzzy_single_mode`). It is **turn-10-only**, so it cannot perturb the official
+sets, which converge at MTTC ≈ 2.3 and never reach turn 10. Again pure
+numpy/logic — no new dependency.
+
+Per-scenario robust breakdown at current HEAD (both fixes, TechnicalScore):
+
+| Split | browsing | buying | boundary | intent_override | overall |
+|---|---:|---:|---:|---:|---:|
+| stress (200) | 0.9640 | 0.9373 | 0.9660 | 0.8793 | **0.9407** |
+| validation (500) | 0.9220 | 0.9030 | 0.8554 | 0.8716 | **0.9035** |
+
+Effect of the second fix alone (override fix already in place):
+
+| Eval | Before | After |
+|---|---:|---:|
+| Robust **stress** overall | 0.9264 | **0.9407** |
+| Robust **validation** overall | 0.8896 | **0.9035** |
+| stress browsing (Hit) | 0.941 (0.975) | **0.9640 (1.000)** |
+| stress buying | 0.9245 | **0.9373** |
+| validation browsing | 0.9043 | **0.9220** |
+| validation buying | 0.8908 | **0.9030** |
+| validation boundary | 0.8275 | **0.8554** |
+| Official default / extended | 0.9707 / 0.9682 | **0.9707 / 0.9682** (unchanged) |
+
+No scenario regressed; the official scores and all 121 tests are byte-identical.
+The residual misses now have targets at genuine fusion rank 17–33 under heavy
+synonym drift (a retrieval-quality limit, not a routing bug). Reproduce:
+
+```bash
+python -m scripts.gen_robust_cases                      # regenerate data/robust/
+python -m scripts.evaluate_robust stress --no-llm       # → benchmark-results/robust/stress.json
+python -m scripts.evaluate_robust validation --no-llm   # → .../validation.json
+```
+
+#### Generalization guard — held-out synonyms
+
+The robust eval drifts phrasing with one fixed synonym map. To check we are not
+merely overfitting to *that* map, `scripts/evaluate_robust_heldout.py` re-runs
+the identical machinery with a **disjoint** synonym set (no shared surface
+forms: e.g. `comfortable→cushioned`, `waterproof→water-repellent`,
+`gray→charcoal`). If a change helped only the primary map it would show up as a
+gap here. Current HEAD, `--no-llm`:
+
+| Split | primary map | held-out map |
+|---|---:|---:|
+| stress (200) | 0.9407 | **0.9554** |
+| validation (500) | 0.9035 | **0.9249** |
+
+The agent scores **at least as high on unseen synonyms as on the synonyms the
+probe was built with** — strong evidence the routing/coverage fixes generalize
+rather than memorising the probe's vocabulary. (The held-out map happens to be
+slightly *easier* lexically, hence the small edge.) The remaining misses on both
+maps are genuinely ambiguous cases — e.g. a plaid flannel jacket whose
+catalog-derived constraints ("synthetic fabric, button closure, button-down
+shirt") describe it as a generic shirt, so it is a weak lexical match for its
+*own* target profile. Those are a retrieval-quality ceiling, not a routing bug,
+and neither a synonym table nor a re-ranker fixes them without risking
+regressions elsewhere — so they are left as-is.
 
 ## 13. Setup and execution
 

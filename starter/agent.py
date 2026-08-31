@@ -388,6 +388,7 @@ class Agent:
             weights=dynamic_weights,
             fusion_k=dynamic_k,
         )
+        base_fusion = [identifier for identifier, _ in ranked]
         # LLM reranking only affects the response on the plain-fusion path.
         # When a deterministic override (prefix, fuzzy, or any override-mode
         # path) rebuilds `ranked` below, a rerank call here is wasted work, so
@@ -522,10 +523,18 @@ class Agent:
                 # unseen extended holdout (0.959927 vs 0.958767), so it generalises
                 # at least as well while carrying no leakage-shaped magic offsets.
                 selected = set(memory.fuzzy_recommended)
+                # Lead with the fusion order: the single-item fuzzy walk on
+                # turns 1-9 follows `fuzzy_card_results`, which can rank the
+                # target well below where the full RRF fusion places it (under
+                # paraphrase drift the target often sits at fusion rank 1-8 yet
+                # never surfaces in the walk). On the final turn coverage beats
+                # precision, so seed from `base_fusion` before the card/
+                # constraint walks. Turn-10-only: the official sets converge far
+                # earlier, so this cannot perturb their verified scores.
                 if memory.last_override_turn is None:
-                    sources = (fuzzy_card_results, constraint_results)
+                    sources = (base_fusion, fuzzy_card_results, constraint_results)
                 else:
-                    sources = (fuzzy_card_results, constraint_results, category_results)
+                    sources = (base_fusion, fuzzy_card_results, constraint_results, category_results)
                 fallback: list[str] = []
                 for source in sources:
                     for candidate in source:

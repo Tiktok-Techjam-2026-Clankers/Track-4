@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 
 __all__ = [
-    "TOKEN_RE", "CONSTRAINT_TOKEN_RE", "CATEGORY_CONTEXT_RE",
+    "TOKEN_RE", "CONSTRAINT_TOKEN_RE", "CATEGORY_CONTEXT_RE", "OVERRIDE_RE",
     "MATERIAL_VALUE_RE", "COLOR_VALUE_RE",
     "STOPWORDS", "CONCEPT_ALIASES", "PHRASE_ALIASES", "QUESTION_SEQUENCE",
     "BM25_POOL", "SEMANTIC_POOL", "VECTOR_DIMENSIONS", "RRF_K",
@@ -27,6 +27,30 @@ TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 CONSTRAINT_TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
 CATEGORY_CONTEXT_RE = re.compile(
     r"^\s*i['’]?m\s+looking\s+for\s+([^.,;]+)", re.IGNORECASE
+)
+# Retraction / topic-change cues that mark a genuine intent override (the
+# shopper abandoning a previously stated preference). These are natural-language
+# reset phrases — retraction verbs ("scratch/forget/ignore/scrap"), reversals
+# ("on second thought", "changed my mind", "never mind"), and substitutions
+# ("instead of", "rather than", "switch to") — none of which occur in the
+# simulators' ordinary constraint replies, so this does not fire on normal
+# turns. Detection is additionally gated to non-opening turns (see
+# ``IntentClassifier.classify``), so a first-message phrasing never trips it.
+OVERRIDE_RE = re.compile(
+    r"\b(?:"
+    r"scratch\s+(?:the|that|my)|"
+    r"scrap\s+(?:the|that|my)|"
+    r"forget\s+(?:the|that|my|about|what)|"
+    r"ignore\s+(?:the|that|my|earlier|previous|prior|what)|"
+    r"disregard\s+(?:the|that|my|earlier|previous|prior|what)|"
+    r"never\s*mind|"
+    r"on\s+second\s+thought|"
+    r"changed?\s+my\s+mind|"
+    r"instead\s+of|"
+    r"rather\s+than|"
+    r"switch(?:ing)?\s+(?:to|gears)"
+    r")\b",
+    re.IGNORECASE,
 )
 MATERIAL_VALUE_RE = re.compile(
     r"\b(cotton|polyester|nylon|leather|wool|spandex|silk|rayon|fabric)\b",
