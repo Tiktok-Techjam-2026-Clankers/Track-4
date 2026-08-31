@@ -254,8 +254,17 @@ The organizer-provided weak BM25 baseline scores **0.107** TechnicalScore on the
 | Catalog-derived intent-cards with fuzzy/prefix fallback | Exact + approximate matching of disclosed attributes against catalog fields |
 | Fusion-seeded late-turn exploration | Lifts coverage on hard turn-10 boundary sessions |
 | Proactive clarification strategy | Asks one targeted follow-up per turn, reducing average MTTC from 9.81 to 2.27 |
+| LLM intent parsing (gpt-4.1-mini) | Structured JSON extraction of mode, constraints, and confidence; falls back to deterministic on failure |
+| LLM semantic reranking | Reorders top candidates by title relevance; optional local cross-encoder alternative via fastembed |
+| Whole-run fallback latch | Instant, permanent degradation to deterministic on first network failure — no per-turn penalty |
 
-Final deterministic result: **0.9707** TechnicalScore (+807% over baseline).
+Final results vs baseline (**0.107** TechnicalScore):
+
+| Mode | Public (200) | Extended (500) |
+|---|---:|---:|
+| Deterministic | **0.9707** (+807%) | **0.9682** |
+| LLM (gpt-4.1-mini) | 0.9384 (+777%) | 0.8886 |
+| LLM (gpt-4.1-nano) | 0.9471 (+785%) | 0.8904 |
 
 ## Limitations & future work
 
