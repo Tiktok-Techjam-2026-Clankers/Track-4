@@ -97,7 +97,7 @@ permanently skipped as "already shown" (§12.5).
 **buying** (price or several concrete requirements given), or **override** (an
 earlier preference is *replaced*). The prompt also carries **user-profile
 context** from `reset()`, so the model reads ambiguous replies in light of who
-the shopper is. Full LLM detail: `docs/llm_intent_architecture.md`.
+the shopper is. Failure modes and the fallback latch: §12.4 and §13.
 
 ## 5. Conversation memory
 
@@ -670,8 +670,9 @@ the fuzzy walk — no hand-tuned rank constants. No ASINs ever enter an LLM prom
 | `tests/test_intent_parser.py` | Intent-parser unit tests (mocked) |
 | `scripts/query.py` | Single-query / interactive demo |
 | `evaluator/local_evaluator.py` | Official local evaluator (participant kit) — sole entry point, unmodified |
-| `docs/llm_intent_architecture.md` | LLM integration architecture and failure modes |
-| `docs/competition_reference.md` | Competition rules, metrics, submission requirements |
+| `docs/competition_specification.md` | Competition problem statement and pillars |
+| `docs/submission_rules.md` | Submission requirements and constraints |
+| `docs/evaluation_config.json` | Scoring weights and metric configuration |
 
 ## 18. Future improvements
 
