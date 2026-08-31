@@ -241,6 +241,22 @@ class Agent:
 `budget`, `feature`, `use_case`, `other`, `null`}. See
 [docs/agent_api_contract.json](docs/agent_api_contract.json).
 
+## Improvements over baseline
+
+The organizer-provided weak BM25 baseline scores **0.107** TechnicalScore on the
+200 public sessions (Hit@10 0.125, MRR 0.068, MTTC 9.81). Key improvements:
+
+| Improvement | Effect |
+|---|---|
+| Multi-route retrieval (BM25 + constraint + intent-card + category + semantic) | Hit@10 from 0.125 to ~0.95; single BM25 misses structured constraints entirely |
+| Intent-aware RRF with dynamic weights | Fuses complementary routes; adapts trust per turn and constraint count |
+| Conversation memory + intent override detection | Handles mid-session mind-changes; prevents stale constraints from dominating |
+| Catalog-derived intent-cards with fuzzy/prefix fallback | Exact + approximate matching of disclosed attributes against catalog fields |
+| Fusion-seeded late-turn exploration | Lifts coverage on hard turn-10 boundary sessions |
+| Proactive clarification strategy | Asks one targeted follow-up per turn, reducing average MTTC from 9.81 to 2.27 |
+
+Final deterministic result: **0.9707** TechnicalScore (+807% over baseline).
+
 ## Limitations & future work
 
 - The LLM reranker sees only product titles; richer per-item context (attributes,
