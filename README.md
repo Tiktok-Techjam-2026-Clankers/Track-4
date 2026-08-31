@@ -82,8 +82,13 @@ cost is disclosed above.
 Python 3.10+.
 
 ```bash
-python -m pip install -r requirements.txt      # only dependency is numpy
+python -m pip install -r requirements.txt      # numpy (required) + fastembed (optional)
 ```
+
+The deterministic pipeline runs on **numpy alone**. `fastembed` powers the
+optional offline cross-encoder reranker (`starter.ranking.LocalReranker`); if it
+or its weights are absent, the reranker degrades to identity and scores are
+unchanged.
 
 Download the catalog from the GitHub Release attached to this repo:
 
@@ -152,7 +157,8 @@ User message + compact conversation state + anonymized profile
                             fusion-k · popularity tie-break · late-turn exploration
         │
         ▼
-   Semantic rerank       ★ gpt-4.1-mini reorders top-20 by title → RRF order on fail
+   Semantic rerank       ★ gpt-4.1-mini reorders top-30 by title → RRF order on fail
+                            (offline: LocalReranker cross-encoder, same seam)
         │
         ▼
 5. Response policy          Top-10 + one clarification question, then repeat
@@ -168,7 +174,7 @@ Import direction is strictly downward.
 | [memory.py](starter/memory.py) | `IntentClassifier`, `ConversationMemory` |
 | [retrieval.py](starter/retrieval.py) | BM25 / constraint / intent-card / category / semantic / phrase routes |
 | [intent_parser.py](starter/intent_parser.py) | deterministic + OpenAI + hybrid intent parsers |
-| [ranking.py](starter/ranking.py) | `LLMReranker`, `HybridRanker`, `ResponseBuilder` |
+| [ranking.py](starter/ranking.py) | `LLMReranker`, `LocalReranker`, `HybridRanker`, `ResponseBuilder` |
 | [agent.py](starter/agent.py) | orchestrator; re-exports the public surface |
 
 The semantic encoder and every index are built locally from visible frozen
