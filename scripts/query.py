@@ -94,9 +94,10 @@ def main() -> None:
     if not catalog_path.is_file():
         raise SystemExit(f"Catalog not found: {catalog_path}")
 
+    print("loading catalog...", end=" ", flush=True)
     agent = Agent(str(catalog_path), use_llm=not args.no_llm, model=args.model)
     mode = f"LLM ({agent.model})" if agent._llm_active else "deterministic"
-    print(f"mode: {mode}")
+    print(f"done.\nmode: {mode}")
 
     titles = load_titles(catalog_path)
     profile: dict = {}
@@ -111,16 +112,16 @@ def main() -> None:
         return
 
     max_turns = 10
-    print(f"interactive mode (max {max_turns} turns) — type 'done' or 'quit' to exit.")
-    print("what are you looking for today?\n")
+    print(f"interactive mode (max {max_turns} turns) — type 'done' or 'quit' to exit.\n")
     turn = 1
     if args.query:  # allow seeding the REPL with a first query
-        print(f"\n  you: {args.query}")
+        print(f"  you: {args.query}")
         print_response(agent.respond(SESSION_ID, args.query, turn, args.top_k), titles)
         turn += 1
     while turn <= max_turns:
         try:
-            message = input("\n  you: ").strip()
+            prompt = "  what are you looking for? " if turn == 1 else "\n  you: "
+            message = input(prompt).strip()
         except EOFError:
             print()
             break
