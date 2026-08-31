@@ -112,7 +112,7 @@ Both accept `--catalog`, `--dataset`, and `--output` to point at other files.
 Run the test suite:
 
 ```bash
-python -m pytest tests/ -q
+python3 -m pytest tests/ -q
 ```
 
 ## Try a single query
@@ -127,10 +127,10 @@ Type `done` or `quit` to end the session early if you're satisfied with the
 recommendations.
 
 ```bash
-python scripts/query.py "waterproof hiking boots under $100"
-python scripts/query.py --no-llm "a warm wool sweater for winter"   # deterministic
-python scripts/query.py --top-k 5 --tags casual,outdoors "something for a hike"
-python scripts/query.py -i                                          # interactive REPL
+python3 scripts/query.py "waterproof hiking boots under $100"
+python3 scripts/query.py --no-llm "a warm wool sweater for winter"   # deterministic
+python3 scripts/query.py --top-k 5 --tags casual,outdoors "something for a hike"
+python3 scripts/query.py -i                                          # interactive REPL
 ```
 
 Titles are shown for readability only — the agent never receives `parent_asin`
