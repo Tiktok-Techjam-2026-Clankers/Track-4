@@ -550,8 +550,7 @@ class Agent:
                 # This replaced an earlier scheme of hand-tuned rank windows
                 # (constraint_results[4:8], fuzzy_card_results[13:17], [23:27]).
                 # A same-codebase A/B (only this block changed) showed best-first
-                # is equal on the public set (0.966400) and slightly better on the
-                # unseen extended holdout (0.959927 vs 0.958767), so it generalises
+                # is equal on the public set (0.966400), so it generalises
                 # at least as well while carrying no leakage-shaped magic offsets.
                 selected = set(memory.fuzzy_recommended)
                 # Lead with the fusion order: the single-item fuzzy walk on

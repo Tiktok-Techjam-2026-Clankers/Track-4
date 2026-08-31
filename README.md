@@ -251,7 +251,7 @@ Final results vs baseline (**0.107** TechnicalScore, public 200 sessions):
 | LLM (gpt-4.1-mini) | 0.9384 | +777% |
 | LLM (gpt-4.1-nano) | 0.9471 | +785% |
 
-## Limitations & future work
+## Limitations
 
 - The LLM reranker sees only product titles; richer per-item context (attributes,
   descriptions) could close the gap to the deterministic ranker.

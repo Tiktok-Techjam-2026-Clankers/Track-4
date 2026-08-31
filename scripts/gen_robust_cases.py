@@ -1,6 +1,6 @@
-"""Materialize robust-evaluator cases from the thin public/private sets.
+"""Materialize robust-evaluator cases from the public set.
 
-The public/private sets store only sample_id / scenario_type / ground_truth /
+The public set stores only sample_id / scenario_type / ground_truth /
 user_profile; the official evaluator derives the intent constraints at runtime
 from the target's catalog entry (``intent_card`` + ``behavior_for``). The
 paraphrase evaluator (``scripts/evaluate_robust.py``) instead expects those
@@ -92,7 +92,7 @@ def main() -> None:
     parser.add_argument(
         "--map",
         nargs="+",
-        default=["data/public_set.jsonl:stress", "data/private_set.jsonl:validation"],
+        default=["data/public_set.jsonl:stress"],
         help="src.jsonl:split pairs",
     )
     args = parser.parse_args()

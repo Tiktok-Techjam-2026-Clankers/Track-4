@@ -51,7 +51,6 @@ from starter.text_utils import RRF_K  # noqa: E402
 
 DATASETS = (
     ("Default", REPO_ROOT / "data" / "public_set.jsonl"),
-    ("Extended", REPO_ROOT / "data" / "private_set.jsonl"),
 )
 
 

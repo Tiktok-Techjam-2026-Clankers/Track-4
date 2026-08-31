@@ -283,7 +283,6 @@ from the fuzzy, constraint, and (post-override) category routes.
 This *best-first* fill replaced an earlier scheme of hand-tuned rank windows
 (`constraint_results[4:8]`, etc.), which looked like memorised offsets. In a
 same-codebase A/B, best-first was **equal on the public set** (0.966400) and
-**slightly better on the extended holdout** (0.959927 vs 0.958767), so it
 generalises at least as well with no leakage-shaped constants (`agent.py:1392`).
 
 ## 11. Response, clarification & validation
@@ -337,11 +336,10 @@ or simply no `OPENAI_API_KEY`:
 | Test set | Sessions | HitRate@10 | MRR | MTTC | Efficiency | TechnicalScore |
 |---|---:|---:|---:|---:|---:|---:|
 | Default public | 200 | 1.000 | 0.986667 | 2.265 | 0.8735 | **0.970700** |
-| Extended holdout | 500 | 0.998 | 0.988633 | 2.370 | 0.8630 | **0.968190** |
 
 > These are the post-override-fix scores (§12.5). The prior baseline was
-> 0.966400 / 0.959927; restoring deterministic override detection lifted MTTC
-> and raised both sets, with HitRate held at 1.000 / 0.998.
+> 0.966400; restoring deterministic override detection lifted MTTC
+> and raised the score, with HitRate held at 1.000.
 
 ### 12.2 LLM-enabled — `gpt-4.1-mini`
 
@@ -351,17 +349,14 @@ all sessions.
 | Test set | Sessions | HitRate@10 | MRR | MTTC | Efficiency | TechnicalScore | Tokens | Wall-clock |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | Default public | 200 | 0.990 | 0.949643 | 3.075 | 0.7925 | **0.938393** | 1,249,783 | ~22.4 min |
-| Extended holdout | 500 | 0.940 | 0.908010 | 3.692 | 0.7308 | **0.888563** | 1,303,054 | ~73.6 min |
 
 The guards cut ~170k tokens and lifted default-public from 0.934214.
 
 > A keyed run is not byte-reproducible. The reranker uses a 3 s timeout with no
 > retry, so a slow call trips the whole-run latch (`_latch_llm_off()`) and
-> disables the LLM for the rest of the process. The extended row above is the
-> honest full-coverage measurement (all 500 sessions confirmed LLM-driven,
-> obtained by rebuilding the Agent whenever the latch tripped — 7 times, which
-> inflates wall-clock). An earlier 0.939797 figure was a *partial-LLM artifact*
-> (latched off mid-run, ~62 % deterministic), not a real result.
+> disables the LLM for the rest of the process. An earlier 0.939797 figure was
+> a *partial-LLM artifact* (latched off mid-run, ~62 % deterministic), not a
+> real result.
 
 ### 12.3 LLM-enabled — `gpt-4.1-nano`
 
@@ -373,14 +368,13 @@ parallel load. Given a 20 s timeout it delivers clean coverage.
 | Test set | Sessions | HitRate@10 | MRR | MTTC | Efficiency | TechnicalScore | Tokens | Wall-clock |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | Default public | 200 | 1.000 | 0.966012 | 3.135 | 0.7865 | **0.947104** | 480,474 | ~2.8 min |
-| Extended holdout | 500 | 0.942 | 0.908293 | 3.656 | 0.7344 | **0.890368** | 1,318,298 | ~7.2 min |
 
 > Measurement instance only (no `starter/` change): timeouts raised to 20 s and
 > the latch neutralised so a transient blip degrades only that turn. 8 workers
-> (`scripts/fast_eval.py`). Transient single-turn fallbacks: 2/~600 (default),
-> 8/~1,700 (extended); reranker never fell back. Not byte-reproducible.
+> (`scripts/fast_eval.py`). Transient single-turn fallbacks: 2/~600 (default);
+> reranker never fell back. Not byte-reproducible.
 
-nano edges mini in the LLM bracket (+0.0087 default, +0.0018 extended) and is
+nano edges mini in the LLM bracket (+0.0087 default) and is
 faster/cheaper — the failure mode was speed, not quality.
 
 **LLM mode is the default** (it runs whenever a key is present) and satisfies

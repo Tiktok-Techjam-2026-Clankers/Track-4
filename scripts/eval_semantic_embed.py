@@ -162,8 +162,7 @@ def main():
 
     catalog_ids, categories, products = catalog_index(CATALOG_PATH)
     loaded = []
-    for label, path in (("Default", REPO_ROOT / "data" / "public_set.jsonl"),
-                        ("Extended", REPO_ROOT / "data" / "private_set.jsonl")):
+    for label, path in (("Default", REPO_ROOT / "data" / "public_set.jsonl"),):
         s = load_jsonl(path)
         loaded.append((label, s[: args.limit] if args.limit else s))
 

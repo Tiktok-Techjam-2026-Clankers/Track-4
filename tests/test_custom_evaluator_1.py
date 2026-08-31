@@ -216,8 +216,8 @@ class CustomEvaluator1Test(unittest.TestCase):
         self.assertIn("response_unknown_key:extra", violations)
 
     def test_relative_label_accepts_paths_outside_the_repo(self) -> None:
-        inside = REPO_ROOT / "data" / "private_set.jsonl"
-        self.assertEqual(relative_label(inside), str(Path("data") / "private_set.jsonl"))
+        inside = REPO_ROOT / "data" / "public_set.jsonl"
+        self.assertEqual(relative_label(inside), str(Path("data") / "public_set.jsonl"))
         outside = Path(tempfile.gettempdir()).resolve() / "elsewhere.jsonl"
         self.assertEqual(relative_label(outside), str(outside))
 

@@ -88,7 +88,7 @@ python -m evaluator.custom_evaluator_1 --shared-agent
 ```
 
 ```bash
-python -m evaluator.custom_evaluator_1 --dataset data/private_set.jsonl --limit 100 --transcripts
+python -m evaluator.custom_evaluator_1 --dataset data/public_set.jsonl --limit 100 --transcripts
 ```
 
 | Flag | Effect |

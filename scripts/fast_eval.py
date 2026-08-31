@@ -11,7 +11,7 @@ from it, and ``evaluator/`` is never modified.
     python scripts/fast_eval.py --workers 8                 # both sets, LLM if key
     python scripts/fast_eval.py --no-llm                    # deterministic (should
                                                             # match the sequential
-                                                            # 0.9664 / 0.9599)
+                                                            # 0.9707)
     python scripts/fast_eval.py --model gpt-4.1-nano --limit 40   # A/B a model
 
 The single-threaded official path stays authoritative:
@@ -48,7 +48,6 @@ from starter.agent import Agent  # noqa: E402
 CATALOG_PATH = REPO_ROOT / "data" / "catalog.jsonl"
 DATASETS = (
     ("Default", REPO_ROOT / "data" / "public_set.jsonl"),
-    ("Extended", REPO_ROOT / "data" / "private_set.jsonl"),
 )
 EMPTY = {"message": "", "ask_attribute": None, "recommendations": []}
 
